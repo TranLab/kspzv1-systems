@@ -1,0 +1,318 @@
+---
+title: "PySPZ Mouse Parasitemia Revision"
+author: "Tuan M. Tran"
+date: "4/13/2022"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+figdir <- "/Volumes/GoogleDrive/My Drive/Manuscripts/KSPZV1 Manuscript/Med Revised Submission 2022/Figures/Revised Figure Panels/"
+```
+
+## Objective
+
+Test whether TLR activation prevents Py infection using Sanaria PySPZ at two doses
+
+## Read-in data and wrangle
+
+```{r readin data, echo = TRUE}
+#function for reading in all sheets here https://stackoverflow.com/questions/12945687/read-all-worksheets-in-an-excel-workbook-into-an-r-list-with-data-frames
+library(readxl)
+read_excel_allsheets <- function(filename, tibble = FALSE) {
+    # I prefer straight data.frames
+    # but if you like tidyverse tibbles (the default with read_excel)
+    # then just pass tibble = TRUE
+    sheets <- readxl::excel_sheets(filename)
+    x <- lapply(sheets, function(X) readxl::read_excel(filename, sheet = X))
+    if(!tibble) x <- lapply(x, as.data.frame)
+    names(x) <- sheets
+    x
+}
+
+mysheets <- read_excel_allsheets("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Elizabeth Leetah Mouse Experiments/Parasitemia/KSPZV1 Parasitemia.xlsx")
+
+for(i in names(mysheets)){
+  names(mysheets[[i]]) <- c("sample", "parasitemia")
+  mysheets[[i]]$sample <- gsub("KSPZV1 parasitemia ", "", mysheets[[i]]$sample)
+  mysheets[[i]] <- mysheets[[i]] %>%
+    filter(sample != "Mean") %>% #remove unneeded rows in some of the sheets
+    filter(sample != "SD") %>% #remove unneeded rows in some of the sheets
+    mutate(day = gsub("\\_.*", "", sample)) %>% #extract day
+    mutate(day = as.numeric(gsub("d", "", day))) %>% #mutate day
+    mutate(treatment = gsub("^[^_]*_([^_]*).*", "\\1", sample)) %>% #extract treatment by removing string before and after first and second underscores, respectively
+    mutate(treatment = gsub(' ', '', treatment)) %>% #remove wayward space
+    mutate(spz_dose = gsub("[^0-9.-]", "", treatment)) %>% #extract SPZ dose by removing non-numeric
+    mutate(spz_dose = ifelse(spz_dose == 1, 50, 1000)) %>%
+    mutate(treatment = gsub('[[:digit:]]+', '', treatment)) %>% #remove digit
+    mutate(treatment = toupper(treatment)) %>%
+    mutate(treatment = factor(treatment,
+                              levels = c("S","LPS","PIC","F","BG"),
+                              labels = c("saline", "LPS", "poly(I:C)", "flagellin", "β-glucan"))) %>%
+  mutate(treatment = factor(treatment, levels = c("saline","LPS","poly(I:C)", "flagellin", "β-glucan")))
+  
+}
+
+mysheets_bind <- bind_rows(mysheets)
+```
+
+## Display results as table
+
+```{r res as table, echo=TRUE, fig.width=12, fig.height=24}
+library(ggpubr)
+mysheets_bind %>%
+  compare_means(parasitemia~treatment, ., method = "wilcox.test", paired = FALSE,
+  group.by = c("spz_dose", "day"), ref.group = "saline") %>%
+  knitr::kable()
+```
+
+## Plot by dotplot
+
+```{r plot data, echo=TRUE, fig.width=12, fig.height=24, fig.align='center'}
+mysheets_bind %>%
+ ggdotplot(., x = "treatment", y = "parasitemia", color = "treatment",
+          fill = "treatment", palette = "jco", size = 1.25)+
+  stat_compare_means(method = "anova")+      # Add global p-value
+  stat_compare_means(label = "p.signif", method = "wilcox.test",
+                     ref.group = "saline", hide.ns = TRUE, paired = FALSE) +
+  scale_fill_manual(values = c("cyan","red", "purple", "orange", "yellow")) +
+  scale_color_manual(values = c("cyan","red", "purple", "orange", "yellow")) +
+  ylab("parasitemia") +
+  facet_grid(day~spz_dose) +
+  scale_y_continuous(breaks = seq(0, 20, len = 5)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        strip.background = element_blank(), axis.line=element_line()) 
+```
+
+## Plot only 1,000 PySPZ timepoints 7,12,14
+
+```{r plot data, echo=TRUE, fig.width=12, fig.height=4 fig.align='center'}
+myplot <- mysheets_bind %>%
+  filter(spz_dose==1000) %>%
+  filter(day %in% c(7,10,12)) %>%
+  ggdotplot(., x = "treatment", y = "parasitemia", color = "treatment",
+          fill = "treatment", palette = "jco", size = 1.25)+
+  stat_compare_means(method = "anova", label.y = 10, vjust = 1)+      # Add global p-value
+  stat_compare_means(label = "p.signif", method = "wilcox.test",
+                     ref.group = "saline", hide.ns = TRUE, paired = FALSE) +
+  stat_summary(fun = "median", fun.min = "median", fun.max= "median", size= 0.2, geom = "crossbar") +
+  scale_fill_manual(values = c("cyan","red", "purple", "orange", "yellow")) +
+  scale_color_manual(values = c("cyan","red", "purple", "orange", "yellow")) +
+  ylab("parasitemia") +
+  facet_wrap(~day, ncol = 3) +
+  scale_y_continuous(breaks = seq(0, 20, len = 5)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        strip.background = element_blank(), axis.line=element_line()) 
+```
+
+```{r plot to PDF, echo=FALSE, eval=FALSE}
+cairo_pdf("/Volumes/GoogleDrive/My Drive/Manuscripts/KSPZV1 Manuscript/Med Revised Submission 2022/Figures/FigSX PySPZ Parasitemia 1000 wide.pdf", height = 3.5, width = 9)
+myplot
+dev.off()
+```
+
+
+## Plot mean parasitemia with error bars over time
+
+```{r plot summarized data, echo=TRUE, fig.width=12, fig.height=6, fig.align='center'}
+summarized_dat <- mysheets_bind %>%
+  select(-c(sample)) %>%
+  group_by(day,treatment,spz_dose) %>%
+  summarise(mean = mean(parasitemia), sd = sd(parasitemia), se=sd(parasitemia)/sqrt(n()))
+
+summarized_dat %>%
+  ggplot(., aes(x = day, y = mean, color = treatment)) +
+  scale_color_manual(values = c("cyan","red", "purple", "orange", "yellow")) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = .2) +
+  geom_point() +
+  geom_line() +
+    ylab("parasitemia") +
+  scale_x_continuous(breaks = c(0,7,10,12,14,17)) +
+  theme_classic() +
+  theme(strip.background = element_blank()) +
+  facet_wrap(~spz_dose)
+```
+
+
+## Look at qPCR data
+
+```{r readin pcr data, echo=TRUE, message=FALSE, warning=FALSE}
+pcr_dat <- readRDS("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Elizabeth Leetah Mouse Experiments/Parasitemia/Mouse PCR parasitemia/18s March Mouse Exp repeat qPCR dataframe 04152022.rds")
+
+pcr_dat <- pcr_dat %>%
+  mutate(mouse = gsub("D.*", "",`Sample Name`)) %>%
+  mutate(day = as.numeric(timepoint))
+
+pcr_dat2 <- pcr_dat %>%
+  group_by(`Mouse number`, treatment, dosegroup) %>%
+  arrange(day) %>%
+  filter(Parasitemia==1) %>%
+  slice(1)
+
+pcr_dat3 <- pcr_dat %>%
+  mutate(mouse = gsub("D.*", "",`Sample Name`)) %>%
+  filter(!mouse %in% pcr_dat2$mouse) %>%
+  group_by(`Mouse number`, treatment, dosegroup) %>%
+  arrange(desc(day)) %>%
+  filter(Parasitemia==0) %>%
+  slice(1)
+
+pcr_dat_surv <- rbind(pcr_dat2, pcr_dat3) %>%
+  select(c(mouse, dosegroup, treatment, day, Parasitemia)) %>%
+  arrange(dosegroup, treatment, day)
+```
+
+```{r plot surv lps}
+library(survival)
+library(survminer)
+
+surv_foo <- pcr_dat_surv %>%
+  filter(treatment %in% c("Saline","LPS") )%>%
+  filter(dosegroup == "high" ) %>%
+  mutate(start = 0) %>%
+  mutate(stop = day) %>%
+  mutate(treatment = factor(treatment)) %>%
+  mutate(Parasitemia = as.integer(Parasitemia)) %>%
+  select(c(mouse,treatment,day,Parasitemia))
+
+survfit1 <- survfit(Surv(day, Parasitemia)~treatment, data=surv_foo)
+
+pic_high_survplot <- ggsurvplot(survfit1,risk.table = FALSE, pval = TRUE,
+                                font.family = "Arial",
+                                break.time.by = 2, main = ("Survival"),
+                                xlab = "day p.i",
+                                ylab = "% free of parasitemia",
+                                censor = TRUE)
+
+# cairo_pdf(filename = paste0(figdir, "Fig 7C KM plot high PySPZ Saline LPS.pdf"), width = 4, height = 4)
+# pic_high_survplot
+# dev.off()
+```
+
+```{r plot surv lps}
+library(survival)
+library(survminer)
+
+surv_foo <- pcr_dat_surv %>%
+  filter(treatment %in% c("Saline","LPS") )%>%
+  filter(dosegroup == "low" ) %>%
+  mutate(start = 0) %>%
+  mutate(stop = day) %>%
+  mutate(treatment = factor(treatment)) %>%
+  mutate(Parasitemia = as.integer(Parasitemia)) %>%
+  select(c(mouse,treatment,day,Parasitemia))
+
+survfit1 <- survfit(Surv(day, Parasitemia)~treatment, data=surv_foo)
+
+pic_low_survplot <- ggsurvplot(survfit1,risk.table = FALSE, pval = TRUE, font.family = "Arial",
+                                break.time.by = 2, main = ("Survival"),
+                                xlab = "day p.i",
+                                ylab = "% free of parasitemia",
+                                censor = TRUE)
+
+cairo_pdf(filename = paste0(figdir, "Fig 7C KM plot low PySPZ Saline LPS.pdf"), width = 4, height = 4)
+pic_low_survplot
+dev.off()
+```
+
+
+```{r plot surv pic}
+library(survival)
+library(survminer)
+
+surv_foo <- pcr_dat_surv %>%
+  filter(treatment %in% c("Saline","poly I:C") )%>%
+  filter(dosegroup == "high" ) %>%
+  mutate(start = 0) %>%
+  mutate(stop = day) %>%
+  mutate(treatment = factor(treatment)) %>%
+  mutate(Parasitemia = as.integer(Parasitemia)) %>%
+  select(c(mouse,treatment,day,Parasitemia))
+
+survfit1 <- survfit(Surv(day, Parasitemia)~treatment, data=surv_foo)
+
+pic_survplot <-ggsurvplot(survfit1,risk.table = FALSE, pval = TRUE, font.family = "Arial",
+                          break.time.by = 1, main = ("Survival"),
+                          xlab = "day p.i",
+                          ylab = "% free of parasitemia",
+                          censor = TRUE)
+pic_survplot
+```
+
+```{r plot surv flagellin}
+library(survival)
+library(survminer)
+
+surv_foo <- pcr_dat_surv %>%
+  filter(treatment %in% c("Saline","Flagellin") )%>%
+  filter(dosegroup == "high" ) %>%
+  mutate(start = 0) %>%
+  mutate(stop = day) %>%
+  mutate(treatment = factor(treatment)) %>%
+  mutate(Parasitemia = as.integer(Parasitemia)) %>%
+  select(c(mouse,treatment,day,Parasitemia))
+
+survfit1 <- survfit(Surv(day, Parasitemia)~treatment, data=surv_foo)
+
+flagellin_survplot <- ggsurvplot(survfit1,risk.table = FALSE, pval = TRUE, font.family = "Arial",
+                                 break.time.by = 1, main = ("Survival"),
+                                 xlab = "day p.i",
+                                 ylab = "% free of parasitemia",
+                                 censor = TRUE)
+
+flagellin_survplot
+```
+
+```{r plot surv ß-glucan}
+library(survival)
+library(survminer)
+
+surv_foo <- pcr_dat_surv %>%
+  filter(treatment %in% c("Saline","ß-glucan") )%>%
+  filter(dosegroup == "high" ) %>%
+  mutate(start = 0) %>%
+  mutate(stop = day) %>%
+  mutate(treatment = factor(treatment)) %>%
+  mutate(Parasitemia = as.integer(Parasitemia)) %>%
+  select(c(mouse,treatment,day,Parasitemia))
+
+survfit1 <- survfit(Surv(day, Parasitemia)~treatment, data=surv_foo)
+
+glucan_survplot <- ggsurvplot(survfit1,risk.table = FALSE, pval = TRUE, font.family = "Arial",
+                               break.time.by = 1, main = ("Survival"),
+                               xlab = "day p.i",
+                               ylab = "% free of parasitemia",
+                               censor = TRUE)
+```
+
+
+```{r plot surv all}
+library(survival)
+library(survminer)
+
+surv_foo <- pcr_dat_surv %>%
+  filter(treatment %in% c("Saline","LPS", "ß-glucan", "poly I:C", "Flagellin", "ß-glucan") )%>%
+  filter(dosegroup == "high" ) %>%
+  mutate(start = 0) %>%
+  mutate(stop = day) %>%
+  mutate(treatment = factor(treatment)) %>%
+  mutate(Parasitemia = as.integer(Parasitemia)) %>%
+  select(c(mouse,treatment,day,Parasitemia))
+
+survfit1 <- survfit(Surv(day, Parasitemia)~treatment, data=surv_foo)
+
+all_survplot <- ggsurvplot(survfit1,risk.table = FALSE, pval = TRUE, font.family = "Arial",
+                               break.time.by = 1, main = ("Survival"),
+                               xlab = "day p.i",
+                               ylab = "% free of parasitemia",
+                               censor = TRUE)
+
+all_survplot
+```
+
+

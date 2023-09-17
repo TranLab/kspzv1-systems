@@ -1,0 +1,104 @@
+---
+title: "Test Gene2ModuleExpressionScores2 on Kali Immunity Dataset"
+author: "Tuan M. Tran"
+date: "2022-08-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(Biobase)
+library(edgeR)
+library(EDASeq)
+library(googledrive)
+library(tidyverse)
+devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/Gene2ModuleExpressionScores2.R?raw=TRUE")
+```
+
+## Objective
+
+Test Gene2ModuleExpressionScores2 on Kali Immunity (Tran et all Immunity 2019) Dataset
+
+```{r readin data}
+#local path: "/Volumes/GoogleDrive/My Drive/Manuscripts/RNASeq Manuscript/Final Data Sets/Infected DGE Analysis edgeR Paired n71 7072 genes 2018-07-30 eset.rds"
+#from google drive
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1ex6BT-0sWSnrl7LNT0xoBItv2R2lqRPT"), path = temp, overwrite = TRUE)
+paired_eset <- readRDS(file = dl$local_path)
+```
+
+## Remake expression set and convert to cpm
+
+```{r convert data to cpm, echo=TRUE}
+# Make DGEList object
+
+y  <- DGEList(counts=counts(paired_eset), genes= fData(paired_eset), group= paste(paired_eset$Class, paired_eset$Infection.Status, sep = "_"),remove.zeros=T)
+
+# tapply(y$samples$lib.siz, INDEX= y$samples$group, summary)
+# plot(y$samples$group, y$samples$lib.siz)
+# summary(y$samples$group)
+
+##########
+# Filter #
+##########
+y <- y[rowSums(cpm(y)>1) >= min(summary(y$samples$group)),]	#Filter low expression tags: keep genes with at least 1 CPM in at least X, where X is the number of samples in the smallest group
+y <- y[rowSums(is.na(y $genes))==0, ]		#Filter those with annotation (they all have annotation so this is optional)
+dim(y)
+
+o <- order(rowSums(y$counts))				#filter duplicates (chose transcript with highest overall count per user guide)
+y <- y[o,]
+d <- duplicated(y$genes$GeneSymbol)
+y <- y[!d,]
+
+y$samples$lib.size <- colSums(y$counts)
+y <- calcNormFactors(y)												#Normalization
+
+cpm_dat <- cpm(y, prior.count = 2,log=TRUE)
+
+# create ExpressionSet and view data for moderated cpm 
+
+fData_cpm <- featureData(paired_eset)[rownames(as.matrix(cpm_dat)),]
+logcpm_eset <- new("ExpressionSet", phenoData = phenoData(paired_eset), exprs = as.matrix(cpm_dat), featureData = fData_cpm)
+```
+
+```{r convert data, echo=TRUE}
+hiBTM_dat <- Gene2ModuleExpressionScores2(gene_expression_dat = logcpm_eset, module_list = "highBTMs", summarized_stat = var)
+lowBTM_dat <- Gene2ModuleExpressionScores2(gene_expression_dat = logcpm_eset, module_list = "lowBTMs", summarized_stat = var)
+```
+
+
+```{r prepare data for heatmap}
+plot_dat <- pData(logcpm_eset) %>%
+  left_join(., hiBTM_dat %>%
+              t() %>%
+              scale() %>%
+              as.data.frame() %>%
+              rownames_to_column(var = "xid"),
+            by = "xid")
+```
+### Clustering Heatmap of Samples using high-annotation level BTMs
+
+```{r plot high btm, fig.align='center', fig.height=6, fig.width=16}
+library(pheatmap)
+
+hiBTM_dat %>%
+  t() %>%
+  scale() %>%
+  t() %>%
+  pheatmap()
+```
+
+### Clustering Heatmap of Samples using low-annotation level BTMs
+
+```{r plot low btm, fig.align='center', fig.height=40, fig.width=16}
+library(pheatmap)
+
+lowBTM_dat %>%
+  t() %>%
+  scale() %>%
+  t() %>%
+  pheatmap()
+```
+
+

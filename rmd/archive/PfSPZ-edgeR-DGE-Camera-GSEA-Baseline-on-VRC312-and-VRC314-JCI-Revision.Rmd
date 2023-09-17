@@ -1,0 +1,1018 @@
+---
+title: "PfSPZ DGE on VRC 312 & VRC 314 Datasets"
+author: "Tuan M. Tran"
+date: "07/15/2023"
+output: html_document
+---
+
+## Objective
+
+This markdown doc creates Seq (count) and cpm expression sets for VRC 312 and VRC 314 data, does differential gene expression with edgeR, and outputs to fast GSEA using several different module types (BTMs, MSigDB collections, MonacoMods). Generates fgsea output tables that can be visualized using the "PfSPZ Import VRC 312 314 GSEA IPA for Figures.Rmd" script in "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/" or on the KSPZV1 github repo.
+
+Notes:
+1. For VRC 314, performed analysis on Group 1 (270K x 3 IV), Group 4 & 5 (270K x 4 IV), and Group 6 (900 x 3IV) as these were the groups with same IV dose repeated.
+2. Used -log10(p) * sign(logFC) as rank metric for GSEA.
+
+## Baseline Analysis
+
+Run DGE, Camera, GSEA for baseline VRC 312 and VRC 314 datasets.
+
+```{r load libraries, echo = TRUE, warning=FALSE, message=FALSE}
+library(doBy)
+library(Biobase)
+library(biomaRt)
+library(edgeR)
+library(genefilter)
+library(NMF)
+library(EDASeq)
+library(tweeDEseqCountData)
+library(reshape2)
+library(tidyverse)
+library(googledrive)
+library(Microsoft365R)
+library(ggplot2)
+```
+
+```{r define paths}
+datadir_312 <- "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/PfSPZ VRC RNA-seq/VRC 312/"
+datadir_314 <- "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/PfSPZ VRC RNA-seq/VRC 314/"
+figdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/"
+COMPARISON <- "P_vs_S_baseline"
+datadir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Prelim Results JCI resubmission/"
+```
+
+## Read in the VRC 312 and VRC 314 expression sets
+
+```{r read in files local, echo=FALSE, message=FALSE, warning=FALSE}
+#local paths
+# hdat_312 <- read_rds("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/VRC 312 for KSPZV1 study/VRC312_counts_eset_02182021_518x21428.rds")
+#hdat_314 <- read_rds("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/VRC 314 for KSPZV1 study/VRC314_counts_eset_02182021_407x19863.rds")
+```
+
+Download from google drive.
+
+```{r read in files googledrive, echo=TRUE, message=FALSE, warning=FALSE}
+#VRC 312 
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1X139jUTL4lAELEA3eBTZFx2hQgmOPFSZ"), path = temp, overwrite = TRUE)
+hdat_312 <- readRDS(file = dl$local_path)
+#VRC 314
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1VXTgNSQuWrsA5E-3OgOgJ-AzMZpL4afo"), path = temp, overwrite = TRUE)
+hdat_314 <- readRDS(file = dl$local_path)
+```
+
+## Set options
+
+```{r set options, echo=TRUE, message=FALSE, warning=FALSE}
+myTIMEPOINT <- "Baseline" #"Baseline"
+
+my_VRC312_Group <- "Grp3a3b4a4b4c"
+if(my_VRC312_Group == "Grp3a3b4a4b4c"){
+  my_VRC312_Groups <- c("3a","3b", "4a","4b", "4c")
+  }
+
+my_VRC314_Group <- "Grp1456" #used for final analysis for reasons stated above
+PCT <- 100 #used 100 PCT for final analysis
+
+if(my_VRC314_Group == "Grp134567"){
+my_VRC314_Groups <- c("Group1","Group3", "Group4","Group5", "Group6", "Group7") # "Group6" #Group2 is IM
+}
+if(my_VRC314_Group == "Grp567"){
+my_VRC314_Groups <- c("Group5", "Group6","Group7")
+}
+if(my_VRC314_Group == "Grp1456"){
+my_VRC314_Groups <- c("Group1", "Group4", "Group5", "Group6")
+}
+
+```
+
+### Reduce datasets to relevant samples
+
+```{r reduce eset 312, echo=TRUE, message=FALSE, warning=FALSE}
+hdat_312 <- hdat_312[,which(hdat_312$Dose.group != "EXT")]
+hdat_312$Dose.group <- droplevels(hdat_312$Dose.group)
+
+#remove outcome = N/A
+hdat_312 <- hdat_312[,!is.na(hdat_312$Outcome.Final)]
+hdat_312$Outcome.Final <- droplevels(hdat_312$Outcome.Final)
+foo <- hdat_312[,hdat_312$Patient == 331 & grepl("Imm5",hdat_312$Dose.group)] #Remove 331 Imm5 (failed QC)
+hdat_312 <- hdat_312[,setdiff(colnames(hdat_312),colnames(foo))]
+
+hdat_312 <- hdat_312[,which(grepl(myTIMEPOINT, hdat_312$Dose.group))]
+hdat_312 <- hdat_312[,which(hdat_312$Outcome.Final != "N/A")]
+hdat_312$Dose.group <- droplevels(hdat_312$Dose.group)
+hdat_312$Outcome.Final <- factor(hdat_312$Outcome.Final)
+hdat_312$Outcome.Final <- droplevels(hdat_312$Outcome.Final)
+
+#Filter on Group
+hdat_312 <- hdat_312[,which(hdat_312$Group %in% my_VRC312_Groups)]
+hdat_312$Group <- factor(hdat_312$Group)
+hdat_312$Group <- droplevels(hdat_312$Group)
+table(hdat_312$Group,hdat_312$Outcome.Final)
+table(hdat_312$Dose.group,hdat_312$Outcome.Final)
+```
+
+```{r reduce eset 314, echo = FALSE}
+hdat_314 <- hdat_314[,which(hdat_314$Dose.group==myTIMEPOINT)]
+hdat_314 <- hdat_314[,which(hdat_314$Outcome.Final != "N/A")]
+hdat_314$Dose.group <- droplevels(hdat_314$Dose.group)
+hdat_314$Outcome.Final <- factor(hdat_314$Outcome.Final)
+hdat_314$Outcome.Final <- droplevels(hdat_314$Outcome.Final)
+
+#Filter on Group
+hdat_314 <- hdat_314[,which(hdat_314$Group%in%my_VRC314_Groups)]
+hdat_314$Group <- factor(hdat_314$Group)
+hdat_314$Group <- droplevels(hdat_314$Group)
+table(hdat_314$Group,hdat_314$Outcome.Final)
+table(hdat_314$Dose.group,hdat_314$Outcome.Final)
+```
+
+# VRC 312 Analysis
+
+## Make DGElist object VRC 312
+
+```{r make DGElist object VRC 312, echo=TRUE, message=FALSE, warning=FALSE}
+# Make DGElist object
+y_VRC312   <- DGEList(count = counts(hdat_312), genes= fData(hdat_312), samples = pData(hdat_312), group= hdat_312$Group, remove.zeros=T)
+```
+
+```{r visualize data for qc check VRC 312, echo=FALSE, eval=FALSE, include=FALSE}
+tapply(y_VRC312$samples$lib.siz, INDEX= y_VRC312$samples$group, summary)
+vv <- y_VRC312$samples[,1:2]
+summary(y_VRC312$samples$group)
+y_VRC312$samples %>%
+  ggplot(.,aes(y = lib.size, x = group, fill = group)) +
+  geom_boxplot() +
+  geom_jitter() +
+  geom_hline(yintercept = 7.5e6, color = "red") +
+  theme_bw()
+```
+
+## Filter genes VRC 312
+
+```{r  gene filtering VRC 312, echo=TRUE, message=FALSE, warning=FALSE}
+filter.type <- "-low_express_filter-"
+dim(y_VRC312)
+#Filter low expression tags: keep genes with at least 1 CPM in at least X, where X is the number of samples in the smallest group (exclude controls by using foo.dat above)
+keep <- filterByExpr(y_VRC312)
+y_VRC312 <- y_VRC312[keep, , keep.lib.sizes=FALSE]
+dim(y_VRC312)
+```
+
+## Normalization VRC 312
+
+```{r normalization VRC 312, echo=TRUE, message=FALSE, warning=FALSE}
+y_VRC312$samples$lib.size <- colSums(y_VRC312$counts)
+y_VRC312 <- calcNormFactors(y_VRC312)			#Normalization, use scale (TMM) here or quantile normalization later with voom, but not both
+#reference for this here: https://support.bioconductor.org/p/77664/
+dim(y_VRC312)
+```
+
+```{r make CPM eset VRC 312, echo=FALSE, eval=FALSE, message=FALSE, warning=FALSE}
+#Make CPM eset VRC 312
+#Note that you generally want to remove batch effects before generating log CPM expression set for downstream applications (e.g. data visualization)
+
+logcpm_312 <- cpm(y_VRC312, prior.count = 0.25,log=T)
+
+# Limit to filtered data
+filtered_312 <- hdat_312[rownames(y_VRC312$counts),]
+filtered_312 <- filtered_312[,colnames(y_VRC312$counts)]
+
+# Make filtered CPM eset
+pd <- new("AnnotatedDataFrame", data = pData(filtered_312), varMetadata = data.frame(cbind(colnames(pData(filtered_312)), rep("stuff", length(colnames(pData(filtered_312)))))))
+fd <- new("AnnotatedDataFrame", data = fData(filtered_312), varMetadata = data.frame(cbind(colnames(fData(filtered_312)), rep("stuff", length(colnames(fData(filtered_312)))))))
+cpm_eset_312 <- ExpressionSet(assayData = logcpm_312, phenoData = pd, featureData = fd)
+
+# Remove batch effects
+Batch1	<-   factor(cpm_eset_312$BatchNumber)
+Batch2	<-   factor(cpm_eset_312$Date.Extracted)
+logcpm_312_rem <- removeBatchEffect(logcpm_312, batch1 = Batch1, batch2 = Batch2) #use for visualization
+
+# Make CPM eset after rem batch effect
+pd <- new("AnnotatedDataFrame", data = pData(filtered_312), varMetadata = data.frame(cbind(colnames(pData(filtered_312)), rep("stuff", length(colnames(pData(filtered_312)))))))
+fd <- new("AnnotatedDataFrame", data = fData(filtered_312), varMetadata = data.frame(cbind(colnames(fData(filtered_312)), rep("stuff", length(colnames(fData(filtered_312)))))))
+logcpm_remBatchEff_eset_312 <- ExpressionSet(assayData = logcpm_312_rem, phenoData = pd, featureData = fd)
+#saveRDS(logcpm_remBatchEff_eset_312, "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/logcpm_remBatchEff_eset_312.rds")
+```
+
+## Linear modeling  VRC 312
+
+Using edgeR with batch adjustment
+
+```{r linear modeling design VRC 312, echo=TRUE, message=FALSE, warning=FALSE}
+# create design matrix according to Limma user guide (Ch 9.7 Multi Level Experiments) 
+# http://www.bioconductor.org/packages/release/bioc/vignettes/limma/inst/doc/usersguide.pdf and
+# http://permalink.gmane.org/gmane.science.biology.informatics.conductor/48432
+Group   <-   factor(y_VRC312$samples$Group)
+Outcome <-   y_VRC312$sample$Outcome.Final
+Timept  <-   y_VRC312$sample$Dose.group
+Dose    <-   factor(y_VRC312$sample$Dose)
+Batch1	<-   factor(y_VRC312$sample$BatchNumber)
+Batch2	<-   factor(y_VRC312$sample$Date.Extracted)
+Batch   <-   as.factor(paste(as.character(Batch1), as.character(Batch2), sep="_"))
+Subject	<-   as.factor(as.character(y_VRC312$sample$Patient))
+Gender	<-   as.factor(as.character(y_VRC312$sample$Gender))
+Outcome_Timept <- factor(paste(Outcome,Timept,sep="_"))
+#design <- model.matrix(~0 + Outcome + Batch1 + Batch2) # batch corrected; baseline only
+design <- model.matrix(~0 + Gender + Group + Batch1 + Batch2 + Outcome) # dose adjusted; batch corrected; edgeR
+#design <- model.matrix(~0 + Outcome_Timept + Dose + Batch1 + Batch2) # batch corrected; dose adjusted; use limma pairing method
+rownames(design) <- Subject
+colnames(design) <- gsub(":", "_", colnames(design))
+colnames(design) <- gsub(". ", "_", colnames(design))
+colnames(design) <- gsub("/", "_", colnames(design))
+colnames(design) <- gsub("Outcome_Timept", "", colnames(design))
+colnames(design) <- gsub("Outcome", "", colnames(design))
+colnames(design) <- gsub("Timept", "", colnames(design))
+colnames(design) <- gsub("_Dose", "", colnames(design))
+design <- design[,!(colSums(design) == 0)]			#remove columns with all zeros
+
+##################################
+#Remove Columns not of Full Rank #
+##################################
+#Error in glmFit.default(sely, design, offset = seloffset, dispersion = 0.05, : Design matrix not of full rank. The following coefficients not estimable: Batch28_18_14 Batch28_6_14
+design <- design[,colnames(design)!="Batch28_18_14"]
+design <- design[,colnames(design)!="Batch28_6_14"]
+colnames(design)
+```
+
+## Estimate Dispersions VRC 312
+
+```{r est disp VRC 312, echo=TRUE, message=FALSE, warning=FALSE}
+y_VRC312 <- estimateDisp(y_VRC312,design) 
+```
+
+## Perform Differential Gene expression VRC 312
+
+```{r fit VRC 312, echo=TRUE, message=FALSE, warning=FALSE}
+fit <- glmQLFit(y_VRC312, design, robust = TRUE)
+qlf <- glmQLFTest(fit, contrast = c(rep(0,(ncol(design)-1)),1))
+TopTab_VRC312 <- topTags(qlf, n = nrow(y_VRC312))$table
+```
+
+### Examine top 15 DEGs (protected vs not protected) VRC 312
+
+VRC 312 DEGs
+
+```{r DEG table VRC 312, echo=TRUE, message=FALSE, warning=FALSE}
+TopTab_VRC312 %>%
+  arrange(PValue) %>%
+  slice_head(., n=15) %>%
+  knitr::kable()
+```
+
+```{r write toptab to file VRC 312, echo=FALSE, eval=FALSE, include=FALSE}
+#Write TopTab table to file VRC 312  
+
+FDR.cutoff <- 1
+write.csv(TopTab_VRC312, paste0(datadir,"PfSPZ_edgeR_DGE", "_",
+                                                              "P_v_S_VRC312_",
+                                                              "FDR",
+                                                              FDR.cutoff*100,"_",
+                                                              ncol(y_VRC312),"x",nrow(y_VRC312),"_", my_VRC312_Group, "_sex_adj.csv"), row.names = FALSE)
+writexl::write_xlsx(TopTab_VRC312, paste0(datadir,"PfSPZ_edgeR_DGE", "_",
+                                                              "P_v_S_VRC312_",
+                                                              "FDR",
+                                                              FDR.cutoff*100,"_",
+                                                              ncol(y_VRC312),"x",nrow(y_VRC312),"_", my_VRC312_Group, "_sex_adj.xlsx"))
+```
+
+
+```{r convert to LFCxPval VRC 312, echo=FALSE, eval=FALSE, include=FALSE}
+#The following code adds a absolute value RankMetric which allows you to arrange by RankMetric and feed df into IPA.
+
+TopTab_VRC312_rankmetric <- TopTab_VRC312 %>%
+  mutate(RankMetric = abs(logFC)*(-log10(PValue))) %>%
+  arrange(desc(RankMetric)) %>%
+  slice_max(order_by = RankMetric, n = nrow(.))
+
+write_csv(TopTab_VRC312_rankmetric, paste0(datadir,"PfSPZ_edgeR_DGE", "_",
+                                           "P_v_S_VRC312_",
+                                           "FDR",
+                                           FDR.cutoff*100,"_",
+                                           ncol(y_VRC312),"x",nrow(y_VRC312),"_", my_VRC312_Group,
+                                           "_RankMetric_",nrow(TopTab_VRC312_rankmetric),"_07162023_sex_adj.csv"))
+
+write_csv(TopTab_VRC312_rankmetric[TopTab_VRC312_rankmetric$RankMetric>=0.1,],
+          paste0(datadir,"PfSPZ_edgeR_DGE", "_",
+                 "P_v_S_VRC312_",
+                 "FDR",
+                 FDR.cutoff*100,"_",
+                 ncol(y_VRC312),"x",nrow(y_VRC312),"_", my_VRC312_Group,
+                 "_RankMetric_",nrow(TopTab_VRC312_rankmetric[TopTab_VRC312_rankmetric$RankMetric>=0.1,]),"_07162023_sex_adj.csv"))
+```
+
+## Camera VRC 312
+
+### Competitive gene set test accounting for inter-gene correlation between "protected" vs "not protected" VRC 312
+
+Uses Camera: https://academic.oup.com/nar/article/40/17/e133/2411151
+
+```{r camera protected vs not protected by group VRC 312, echo=TRUE, message=FALSE, warning=FALSE}
+mymodules <- c("highBTMs", "lowBTMs", "MonacoModules", "BloodGen3Module", "MSigDB_Hallmark_v7.4")
+cameratab_list <- vector("list", length(mymodules))
+names(cameratab_list) <- mymodules
+for(i in mymodules){
+  url <- paste0("https://github.com/TranLab/ModuleLists/blob/main/", i, ".rds?raw=true")
+  temp_list <- readRDS(url(url, method="libcurl"))
+  temp_indices <- ids2indices(temp_list, y_VRC312$genes$hgnc_symbol)
+  cameratab <- camera(y_VRC312, temp_indices, design, contrast =  c(rep(0,(ncol(design)-1)),1), inter.gene.cor=0.01)
+  cameratab_list[[i]] <- cameratab %>%
+    rownames_to_column(var = "module")
+}
+cameratab_bind_VRC312 <- bind_rows(cameratab_list, .id = "module_type") %>%
+  mutate(study = "VRC312") %>%
+  dplyr::select(study, module_type, module, everything())
+```
+
+### Plot CAMERA results VRC 312
+
+```{r camera low btms protected vs not protected by group VRC 312, echo=TRUE, message=FALSE, warning=FALSE}
+#plotting options
+basetextsize <- 12 
+myfont <- "Helvetica"
+bubble_max_size <- 15
+
+myCameraPlotDat_VRC312 <- cameratab_bind_VRC312 %>%
+  filter(module_type %in% c("highBTMs", "lowBTMs", "MonacoModules", "BloodGen3Module", "MSigDB_Hallmark_v7.4"))  %>%
+  #filter(!grepl("TBA", module)) %>%
+  dplyr::select(study, module_type, module, NGenes, Direction, FDR) %>%
+  mutate(neglogpadj = -log10(FDR)) %>%
+  mutate(fdr_direction = ifelse(Direction == "Up", neglogpadj*1, neglogpadj*-1)) %>%
+  mutate(module = gsub("gd", "γδ", module)) %>%
+  mutate(module = gsub("Vd2", "Vδ2", module)) %>%
+  mutate(module = gsub("Vg", "Vγ", module)) %>%
+  mutate(module = gsub("HALLMARK_", "", module)) %>%
+  mutate(module = gsub("_", " ", module)) %>%
+  mutate(module = sub(".*?\\_", "", module)) %>%
+  mutate(module = fct_reorder(module, fdr_direction, .desc = TRUE)) %>%
+  filter(!grepl("TBD", module)) %>%
+  mutate(module_type = factor(module_type, levels = c("highBTMs", "MonacoModules", "lowBTMs", "MSigDB_Hallmark_v7.4", "BloodGen3Module"))) %>%
+  arrange(desc(neglogpadj)) %>% 
+  droplevels() %>%
+  filter(FDR < 0.05) %>%
+  dplyr::select(study, module_type, module, everything())
+
+#saveRDS(myCameraPlotDat_VRC312, paste0(datadir, "VRC312_Camera_PvNP_FDR5.rds"))
+```
+
+### Apply GSEA VRC 312
+
+Rank genes by -log10(PValue)*sign(logFC). Run fgsea from fgsea package using NamedGeneRankList2GseaTable helper function.
+
+```{r apply fgsea VRC 312, echo=TRUE, message=FALSE, warning=FALSE}
+set.seed(23)
+ranks_VRC312 <- TopTab_VRC312 %>% 
+  mutate(rankmetric = -log10(.$PValue)*sign(.$logFC)) %>%
+  dplyr::select(hgnc_symbol,rankmetric) %>% 
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(hgnc_symbol) %>%  
+  summarize(rankmetric = mean(rankmetric)) %>%
+  arrange(desc(rankmetric)) %>%
+  deframe()
+
+#Run fgsea from fgsea package using NamedGeneRankList2GseaTable helper function
+devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/NamedGeneRankList2GseaTable.R?raw=TRUE")
+GSEAtab_VRC312 <- NamedGeneRankList2GseaTable(rankedgenes = ranks_VRC312,
+                                       geneset = "all",
+                                       output_directory = tempdir(),
+                                       filename_prefix = "GSEA",
+                                       sampleSize = 101,
+                                       minSize = 20,
+                                       maxSize = Inf,
+                                       scoreType = "std") %>%
+  as_tibble() %>%
+  arrange(desc(NES)) %>% 
+  mutate(study = "VRC312") %>%
+  dplyr::select(study, module_type, pathway, ES, NES, size, leadingEdge, pval, padj) %>% 
+  mutate(leadingEdge = gsub("^c\\(|\\)$", "", leadingEdge)) %>%
+  mutate(leadingEdge = gsub('"', "", leadingEdge)) %>%
+  arrange(padj)
+
+#saveRDS(GSEAtab_VRC312, paste0(datadir, "VRC312_GSEA_PvNP_FDR5.rds"))
+```
+
+```{r write camera and gsea results to file VRC 312, eval=FALSE, echo=FALSE, include=FALSE}
+writexl::write_xlsx(myCameraPlotDat, paste0(datadir,"PfSPZ_Camera_VRC312", "_",
+                          "P_v_S_",
+                          my_VRC312_Group,"_",
+                          myTIMEPOINT,"_",
+                          "Pval",
+                          ncol(y_VRC312),"x",nrow(y_VRC312),".xlsx"))
+
+writexl::write_xlsx(GSEAtab_VRC312, paste0(datadir,"PfSPZ_GSEA_VRC312", "_",
+                          "P_v_S_",
+                          my_VRC312_Group,"_",
+                          myTIMEPOINT,"_",
+                          "Pval",
+                          ncol(y_VRC312),"x",nrow(y_VRC312),".xlsx"))
+```
+
+# VRC 314 Analysis
+
+## Make DGElist object VRC 314
+
+```{r make DGElist object VRC 314, echo=TRUE, message=FALSE, warning=FALSE}
+y_VRC314   <- DGEList(count = counts(hdat_314), genes= fData(hdat_314), samples = pData(hdat_314),group= hdat_314$Outcome.Final, remove.zeros=T)
+```
+
+
+```{r visualize data for qc check VRC 314, echo=FALSE, eval=FALSE, include=FALSE}
+tapply(y_VRC314$samples$lib.siz, INDEX= y_VRC314$samples$group, summary)
+vv <- y_VRC314$samples[,1:2]
+summary(y_VRC314$samples$group)
+y_VRC314$samples %>%
+  ggplot(.,aes(y = lib.size, x = group, fill = group)) +
+  geom_boxplot() +
+  geom_jitter() +
+  geom_hline(yintercept = 7.5e6, color = "red") +
+  theme_bw()
+```
+
+## Filter genes VRC 314
+
+```{r  gene filtering VRC 314, echo=TRUE, message=FALSE, warning=FALSE}
+filter.type <- "-low_express_filter-"
+dim(y_VRC314)
+#Filter low expression tags: keep genes with at least 1 CPM in at least X, where X is the number of samples in the smallest group (exclude controls by using foo.dat above)
+keep <- filterByExpr(y_VRC314, group = hdat_314$Outcome.Final)
+y_VRC314 <- y_VRC314[keep, , keep.lib.sizes=FALSE]
+dim(y_VRC314)
+```
+
+## Normalization VRC 314
+
+```{r normalization VRC 314, echo=TRUE, message=FALSE, warning=FALSE}
+###############
+y_VRC314$samples$lib.size <- colSums(y_VRC314$counts)
+y_VRC314 <- calcNormFactors(y_VRC314)			#Normalization, use scale (TMM) here or quantile normalization later with voom, but not both
+#reference for this here: https://support.bioconductor.org/p/77664/
+dim(y_VRC314)
+logcpm_314 <- cpm(y_VRC314, prior.count = 0.25,log=T)
+```
+
+## Filter by library size VRC 314
+
+Note that expression set already has been filtered.
+
+```{r filter by library size, echo=TRUE, message=FALSE, warning=FALSE}
+y_VRC314 <- y_VRC314[,y_VRC314$samples$lib.size>7.5e6]
+```
+
+```{r make CPM eset VRC 314, echo=FALSE, eval=FALSE, message=FALSE, warning=FALSE}
+#Make CPM eset VRC 314
+#Note that you generally want to remove batch effects before generating log CPM expression set for downstream applications (e.g. data visualization)
+
+# Limit to filtered data
+filtered_314 <- hdat_314[rownames(y_VRC314$counts),]
+filtered_314 <- filtered_314[,colnames(y_VRC314$counts)]
+filtered_314
+
+# Make filtered CPM eset
+pd <- new("AnnotatedDataFrame", data = pData(filtered_314), varMetadata = data.frame(cbind(colnames(pData(filtered_314)), rep("stuff", length(colnames(pData(filtered_314)))))))
+fd <- new("AnnotatedDataFrame", data = fData(filtered_314), varMetadata = data.frame(cbind(colnames(fData(filtered_314)), rep("stuff", length(colnames(fData(filtered_314)))))))
+cpm_eset_314 <- ExpressionSet(assayData = logcpm_314, phenoData = pd, featureData = fd)
+
+# Remove batch effects
+Batch1	<-   factor(cpm_eset_314$Lib_Batch)
+Batch2	<-   factor(cpm_eset_314$Date)
+logcpm_314_remBatchEff <- removeBatchEffect(logcpm_314, batch1 = Batch1, batch2 = Batch2)
+#saveRDS(logcpm_314_remBatchEff, "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/logcpm_314_remBatchEff.rds")
+
+#Make CPM eset after rem batch effect
+pd <- new("AnnotatedDataFrame", data = pData(filtered_314), varMetadata = data.frame(cbind(colnames(pData(filtered_314)), rep("stuff", length(colnames(pData(filtered_314)))))))
+fd <- new("AnnotatedDataFrame", data = fData(filtered_314), varMetadata = data.frame(cbind(colnames(fData(filtered_314)), rep("stuff", length(colnames(fData(filtered_314)))))))
+logcpm_remBatchEff_eset_314 <- ExpressionSet(assayData = logcpm_314_remBatchEff, phenoData = pd, featureData = fd)
+```
+
+```{r save object VRC 314, include=FALSE, eval=FALSE, echo=FALSE}
+# saveRDS(logcpm_remBatchEff_eset_314, paste0("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/VRC 314 for KSPZV1 study/VRC314_logcpm_remBatchEff_eset_02182021_",
+#                                             ncol(logcpm_remBatchEff_eset_314),
+#                                             "x",
+#                                             nrow(logcpm_remBatchEff_eset_314),
+#                                             ".rds"))
+```
+
+## Linear modeling  VRC 314
+
+Use edgeR with batch adjustment
+
+```{r linear modeling design VRC 314, message=FALSE, warning=FALSE}
+# create design matrix according to Limma user guide (Ch 9.7 Multi Level Experiments) 
+# http://www.bioconductor.org/packages/release/bioc/vignettes/limma/inst/doc/usersguide.pdf and
+# http://permalink.gmane.org/gmane.science.biology.informatics.conductor/48432
+
+Outcome <- y_VRC314$samples$Outcome.Final
+Timept <- y_VRC314$samples$Dose.group
+Sex <- factor(y_VRC314$samples$Gender)
+Batch1	<-   factor(y_VRC314$samples$Lib_Batch)
+Batch2	<-   factor(y_VRC314$samples$Date)
+Batch   <-   as.factor(paste(as.character(Batch1), as.character(Batch2), sep="_"))
+Group <- factor(y_VRC314$samples$Group)
+Subject	<-   y_VRC314$samples$Patient
+Outcome_Timept <- factor(paste(Outcome,Timept,sep="_"))
+design <- model.matrix(~0 + Group + Sex + Batch + Outcome) # GROUP and BATCH corrected
+rownames(design) <- Subject
+colnames(design) <- gsub(":", "_", colnames(design))
+colnames(design) <- gsub("\\.", "_", colnames(design))
+colnames(design) <- gsub(", ", "_", colnames(design))
+colnames(design) <- gsub(" \\+ ", "_", colnames(design))
+colnames(design) <- gsub("CHMI 1", "CHMI1", colnames(design))
+colnames(design) <- gsub(" ", "_", colnames(design))
+colnames(design) <- gsub("Outcome_Timept", "", colnames(design))
+colnames(design) <- gsub("Outcome", "", colnames(design))
+colnames(design) <- gsub("Timept", "", colnames(design))
+design <- design[,!(colSums(design) == 0)]			#remove columns with all zeros
+
+# When running myGroup = Grp1456
+# Design matrix not of full rank.  The following coefficients not estimable:
+#  Batch4_Jun_27_2016 Batch5_March_23_2016 Batch5_Nov_24_2015
+#for Grp
+if(my_VRC314_Group == "Grp1456"){
+  design <- design[,!colnames(design)%in%c("Batch4_Jun_27_2016", "Batch5_March_23_2016", "Batch5_Nov_24_2015")]
+}
+colnames(design)
+```
+
+## Estimate Dispersions VRC 314
+
+```{r est disp VRC 314, message=FALSE, warning=FALSE}
+y_VRC314 <- estimateDisp(y_VRC314, design) 
+```
+
+## Perform Differential Gene expression VRC 314
+
+```{r fit VRC 314, message=FALSE, warning=FALSE}
+fit <- glmQLFit(y_VRC314, design, robust = TRUE)
+qlf <- glmQLFTest(fit, contrast = c(rep(0,(ncol(design)-1)),1))
+TopTab_VRC314 <- topTags(qlf, n = nrow(y_VRC314))$table
+```
+
+### Examine top 15 DEGs (protected vs not protected) VRC 314
+
+VRC 314 DEGs
+
+```{r DEG table VRC 314, message=FALSE, warning=FALSE}
+TopTab_VRC314 %>%
+  arrange(PValue) %>%
+  slice_head(., n=15) %>%
+  knitr::kable()
+```
+
+```{r write VRC 314 toptab to file, echo=FALSE, eval=FALSE, include=FALSE}
+## Write TopTab table to file
+
+FDR.cutoff <- 1
+write.csv(TopTab_VRC314, paste0(datadir,"PfSPZ_edgeR_DGE", "_",
+                                                              "P_v_S_VRC314_",
+                                                              "FDR",
+                                                              FDR.cutoff*100,"_",
+                                                              ncol(y_VRC314),"x",nrow(y_VRC314),"_", my_VRC314_Group, "_sex_adj.csv"), row.names = FALSE)
+writexl::write_xlsx(TopTab_VRC314, paste0(datadir,"PfSPZ_edgeR_DGE", "_",
+                                                              "P_v_S_VRC314_",
+                                                              "FDR",
+                                                              FDR.cutoff*100,"_",
+                                                              ncol(y_VRC314),"x",nrow(y_VRC314),"_", my_VRC314_Group, "_sex_adj.xlsx"))
+```
+
+```{r convert to LFCxPval VRC 314, echo=FALSE, eval=FALSE, include=FALSE}
+#The following code adds a absolute value RankMetric which allows you to arrange by RankMetric and feed df into IPA.
+
+TopTab_VRC314_rankmetric <- TopTab_VRC314 %>%
+  mutate(RankMetric = abs(logFC)*(-log10(PValue))) %>%
+  arrange(desc(RankMetric)) %>%
+  slice_max(order_by = RankMetric, n = nrow(.))
+
+write_csv(TopTab_VRC314_rankmetric,
+          paste0(datadir,"PfSPZ_edgeR_DGE", "_",
+                 "P_v_S_VRC314_",
+                 "FDR",
+                 FDR.cutoff*100,"_",
+                 ncol(y_VRC314),"x",nrow(y_VRC314),"_",
+                 my_VRC314_Group, "_RankMetric_",nrow(TopTab_VRC314_rankmetric),"_07162023_sex_adj.csv"))
+
+write_csv(TopTab_VRC314_rankmetric[TopTab_VRC314_rankmetric$RankMetric>=0.1,],
+          paste0(datadir,"PfSPZ_edgeR_DGE", "_",
+                 "P_v_S_VRC314_",
+                 "FDR",
+                 FDR.cutoff*100,"_",
+                 ncol(y_VRC314),"x",nrow(y_VRC314),"_", my_VRC314_Group,
+                 "_RankMetric_",nrow(TopTab_VRC314_rankmetric[TopTab_VRC314_rankmetric$RankMetric>=0.1,]),"_07162023_sex_adj.csv"))
+```
+
+## Camera VRC 314
+
+### Competitive gene set test accounting for inter-gene correlation between "protected" vs "not protected" VRC 314
+
+Uses Camera: https://academic.oup.com/nar/article/40/17/e133/2411151
+
+```{r camera protected vs not protected by group VRC 314, echo=TRUE, message=FALSE, warning=FALSE}
+mymodules <- c("highBTMs", "lowBTMs", "MonacoModules", "BloodGen3Module", "MSigDB_Hallmark_v7.4")
+cameratab_list <- vector("list", length(mymodules))
+names(cameratab_list) <- mymodules
+for(i in mymodules){
+  url <- paste0("https://github.com/TranLab/ModuleLists/blob/main/", i, ".rds?raw=true")
+  temp_list <- readRDS(url(url, method="libcurl"))
+  temp_indices <- ids2indices(temp_list, y_VRC314$genes$hgnc_symbol)
+  cameratab <- camera(y_VRC314, temp_indices, design, contrast =  c(rep(0,(ncol(design)-1)),1), inter.gene.cor=0.01)
+  cameratab_list[[i]] <- cameratab %>%
+    rownames_to_column(var = "module")
+}
+cameratab_bind_VRC314 <- bind_rows(cameratab_list, .id = "module_type") %>%
+  mutate(study = "VRC314") %>%
+  dplyr::select(study, module_type, module, everything())
+```
+
+### Plot CAMERA results VRC 314
+
+```{r camera low btms protected vs not protected by group VRC 314, echo=TRUE, message=FALSE, warning=FALSE}
+#plotting options
+basetextsize <- 12 
+myfont <- "Helvetica"
+bubble_max_size <- 15
+
+myCameraPlotDat_VRC314 <- cameratab_bind_VRC314 %>%
+  filter(module_type %in% c("highBTMs", "lowBTMs", "MonacoModules", "BloodGen3Module", "MSigDB_Hallmark_v7.4"))  %>%
+  #filter(!grepl("TBA", module)) %>%
+  dplyr::select(study, module_type, module, NGenes, Direction, FDR) %>%
+  mutate(neglogpadj = -log10(FDR)) %>%
+  mutate(fdr_direction = ifelse(Direction == "Up", neglogpadj*1, neglogpadj*-1)) %>%
+  mutate(module = gsub("gd", "γδ", module)) %>%
+  mutate(module = gsub("Vd2", "Vδ2", module)) %>%
+  mutate(module = gsub("Vg", "Vγ", module)) %>%
+  mutate(module = gsub("HALLMARK_", "", module)) %>%
+  mutate(module = gsub("_", " ", module)) %>%
+  mutate(module = sub(".*?\\_", "", module)) %>%
+  mutate(module = fct_reorder(module, fdr_direction, .desc = TRUE)) %>%
+  filter(!grepl("TBD", module)) %>%
+  mutate(module_type = factor(module_type, levels = c("highBTMs", "MonacoModules", "lowBTMs", "MSigDB_Hallmark_v7.4", "BloodGen3Module"))) %>%
+  arrange(desc(neglogpadj)) %>% 
+  droplevels() %>%
+  filter(FDR < 0.05) %>%
+  dplyr::select(study, module_type, module, everything())
+
+#saveRDS(myCameraPlotDat_VRC314, paste0(datadir, "VRC314_Camera_PvNP_FDR5.rds"))
+```
+
+### Apply GSEA VRC 314
+
+Rank genes by -log10(PValue)*sign(logFC). Run fgsea from fgsea package using NamedGeneRankList2GseaTable helper function.
+
+```{r apply fgsea VRC 314, message=FALSE, warning=FALSE}
+set.seed(23)
+ranks_VRC314 <- TopTab_VRC314 %>% 
+  mutate(rankmetric = -log10(.$PValue)*sign(.$logFC)) %>%
+  dplyr::select(hgnc_symbol,rankmetric) %>% 
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(hgnc_symbol) %>%  
+  summarize(rankmetric = mean(rankmetric)) %>%
+  arrange(desc(rankmetric)) %>%
+  deframe()
+
+#Run fgsea from fgsea package using NamedGeneRankList2GseaTable helper function
+devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/NamedGeneRankList2GseaTable.R?raw=TRUE")
+GSEAtab_VRC314 <- NamedGeneRankList2GseaTable(rankedgenes = ranks_VRC314,
+                                       geneset = "all",
+                                       output_directory = tempdir(),
+                                       filename_prefix = "GSEA",
+                                       sampleSize = 101,
+                                       minSize = 20,
+                                       maxSize = Inf,
+                                       scoreType = "std") %>%
+  as_tibble() %>%
+  arrange(desc(NES)) %>%
+  mutate(study = "VRC314") %>%
+  dplyr::select(study, module_type, pathway, ES, NES, size, leadingEdge, pval, padj) %>% 
+  mutate(leadingEdge = gsub("^c\\(|\\)$", "", leadingEdge)) %>%
+  mutate(leadingEdge = gsub('"', "", leadingEdge)) %>%
+  arrange(padj)
+```
+
+```{r write camera and gsea results to file VRC 314, eval=FALSE, echo=FALSE, include=FALSE}
+writexl::write_xlsx(myCameraPlotDat_VRC314, paste0(datadir,"PfSPZ_Camera_VRC314", "_",
+                          "P_v_S_",
+                          my_VRC314_Group,"_",
+                          myTIMEPOINT,"_",
+                          "Pval",
+                          ncol(y_VRC314),"x",nrow(y_VRC314),"_sex_adj.xlsx"))
+
+writexl::write_xlsx(GSEAtab_VRC314, paste0(datadir,"PfSPZ_GSEA_VRC314", "_",
+                          "P_v_S_",
+                          my_VRC314_Group,"_",
+                          myTIMEPOINT,"_",
+                          "Pval",
+                          ncol(y_VRC314),"x",nrow(y_VRC314),"_sex_adj.xlsx"))
+```
+
+```{r load bspzv1 degs from googledrive, include=FALSE, eval=FALSE, echo=FALSE}
+TopTab_BSPZV1 <- read_rds("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/BSPZV1 analysis/BSPZV1 Data/BSPZV1_edgeR_DEGs_PvNP_all.rds")
+```
+
+```{r combine VRC312 VRC314 BSPZV1 all deg dat}
+#Bind data from VRC312, VRC314, and BSPZV1 studies
+#Get BSPZV1 DEG table from googledrive
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1NR0SKRw37ZUTnKfvdedCPWoyOv3aDECU"), path = temp, overwrite = TRUE)
+TopTab_BSPZV1 <- readRDS(file = dl$local_path)
+
+TopTab_BSPZV1_VRC312_VRC314 <- bind_rows(TopTab_BSPZV1 %>%
+                                           as_tibble() %>%
+                                           dplyr::rename(hgnc_symbol = "gene_symbol") %>%
+                                           dplyr::select(-c(ensembl_id)) %>%
+                                           mutate(study = "BSPZV1"),
+                                         TopTab_VRC312 %>%
+                                           as_tibble() %>%
+                                           dplyr::select(-c(Gene_length)) %>%
+                                           mutate(study = "VRC312"),
+                                         TopTab_VRC314 %>%
+                                           as_tibble() %>%
+                                           dplyr::select(-c(Gene_length)) %>%
+                                           mutate(study = "VRC314")) %>%
+  dplyr::select(study, everything())
+```
+
+```{r write VRC312 VRC314 BSPZV1 all deg dat, eval=FALSE, include=FALSE, echo=FALSE}
+TopTab_BSPZV1_VRC312_VRC314 %>%
+  writexl::write_xlsx(.,
+                      paste0(datadir, "PfSPZ_edgeR_DGE_PvS_BSPZV1_VRC312_VRC314_allDEGs.xlsx"))
+```
+
+```{r load bspzv1 local data, eval=FALSE, echo=FALSE, include=FALSE}
+myCameraPlotDat_BSPZV1 <- read_rds("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/BSPZV1 analysis/BSPZV1 Data/BSPZV1_Camera_PvNP.rds")
+```
+
+```{r combine VRC312 VRC314 BSPZV1 camera dat}
+#Get BSPZV1 Camera data from googledrive
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1NWQVtjpDP5Qjtee4aezR0fSywXpEn5fR"), path = temp, overwrite = TRUE)
+myCameraPlotDat_BSPZV1 <- readRDS(file = dl$local_path)
+
+Cameratab_BSPZV1_VRC312_VRC314 <- bind_rows(myCameraPlotDat_BSPZV1, myCameraPlotDat_VRC312, myCameraPlotDat_VRC314)                                    
+```
+
+```{r write Cameratab_BSPZV1_VRC312_VRC314, eval=FALSE, include=FALSE, echo=FALSE}
+Cameratab_BSPZV1_VRC312_VRC314 %>%
+  writexl::write_xlsx(.,
+                      paste0(datadir, "PfSPZ_Camera_PvS_BSPZV1_VRC312_VRC314_sex_adj.xlsx"))
+```
+
+### Visualize Camera data as bubble plot
+
+Filter based on padj < 0.05.
+
+Add small legend helper function
+
+```{r helper fn make small legend, echo=TRUE}
+addSmallLegend <- function(myPlot, pointSize = 2.5, textSize = 4, spaceLegend = 0.5) {
+    myPlot +
+        guides(shape = guide_legend(override.aes = list(size = pointSize)),
+               color = guide_legend(override.aes = list(size = pointSize))) +
+        theme(legend.title = element_text(size = textSize), 
+              legend.text  = element_text(size = textSize),
+              legend.key.size = unit(spaceLegend, "lines"))
+}
+```
+
+```{r visualize camera data, message=FALSE, warning=FALSE}
+plotDat_Camera <- Cameratab_BSPZV1_VRC312_VRC314 %>%
+  filter(FDR < 0.05) %>%
+  filter(!grepl("TBA", module)) %>%
+  mutate(neglogFDR = -log10(FDR)) %>%
+  mutate(module = gsub("gd", "γδ", module)) %>%
+  mutate(module = gsub("Vd2", "Vδ2", module)) %>%
+  mutate(module = gsub("Vg", "Vγ", module)) %>%
+  mutate(module = gsub("HALLMARK_", "", module)) %>%
+  mutate(module = gsub("_", " ", module)) %>%
+  mutate(module = sub(".*?\\_", "", module)) %>%
+  filter(!grepl("TBD", module)) %>%
+  arrange(desc(neglogFDR)) %>%
+  group_by(study, module_type) %>%
+  mutate(module = fct_reorder(module, neglogFDR, .desc = FALSE)) %>%
+  ungroup() %>% 
+  droplevels()
+
+#plotting options
+basetextsize <- 7.5  
+myfont <- "Helvetica"
+bubble_max_size <- 6
+
+camera_hm_hibtm_monaco_plot <- plotDat_Camera %>%
+  filter(module_type %in% c("MSigDB_Hallmark_v7.4", "highBTMs", "MonacoModules")) %>%
+  mutate(module_type = factor(module_type,
+                              levels = c("highBTMs", "MonacoModules", "MSigDB_Hallmark_v7.4"),
+                              labels = c("high BTMs", "Monaco", "Hallmark"))) %>%
+  ggplot(., aes(x = study, y = module, fill = Direction)) +
+  geom_point(aes(size=neglogFDR), shape=21, stroke = 0.25, alpha = 0.6) +
+  scale_size_area(name = expression(-log[10]~FDR), max_size = bubble_max_size) +
+  scale_fill_manual(values = c("blue","red")) +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.text = element_text(size = 5.5),
+        strip.background = element_blank(),
+        legend.position = "right",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  facet_wrap(~module_type, scales = "free_y", nrow = 3)
+
+module_summary_lowbtms <- plotDat_Camera %>%
+  group_by(module_type, module) %>%
+  summarize(n = n()) %>%
+  filter(module_type == "lowBTMs" & n>1) %>%
+  arrange(n)
+
+camera_lowbtm_plot <- plotDat_Camera %>%
+  filter(module_type %in% c("lowBTMs")) %>%
+  filter(module %in% module_summary_lowbtms$module) %>%
+  ggplot(., aes(x = study, y = module, fill = Direction)) +
+  geom_point(aes(size=neglogFDR), shape=21, stroke = 0.25, alpha = 0.6) +
+  scale_size_area(name = expression(-log[10]~FDR), max_size = bubble_max_size) +
+  scale_fill_manual(values = c("blue","red")) +
+  #ggtitle("low BTMs") +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.text = element_text(size = 5.5),
+        legend.position = "right",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  facet_wrap(~module_type)
+
+module_summary_BloodGen3Module <- plotDat_Camera %>%
+  group_by(module_type, module) %>%
+  summarize(n = n()) %>%
+  filter(module_type == "BloodGen3Module" & n>1) %>%
+  arrange(n)
+
+camera_bloodgen3_plot <- plotDat_Camera %>%
+  filter(module_type %in% c("BloodGen3Module")) %>%
+  filter(module %in% module_summary_BloodGen3Module$module) %>%
+  ggplot(., aes(x = study, y = module, fill = Direction)) +
+  geom_point(aes(size=neglogFDR), shape=21, stroke = 0.25, alpha = 0.6) +
+  scale_size_area(name = expression(-log[10]~FDR), max_size = bubble_max_size) +
+  scale_fill_manual(values = c("blue","red")) +
+  #ggtitle("low BTMs") +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.text = element_text(size = 5.5),
+        legend.position = "right",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  facet_wrap(~module_type)
+```
+
+### Plot Camera bubbleplots
+
+Red: enriched in protected/uninfected 
+Blue: enriched in not protected/infected
+
+Only modules with FDR<5% are shown.
+
+```{r plot camera bubbleplot hi btms, fig.align='center', fig.width=12, fig.height=11, echo=FALSE, message=FALSE, warning=FALSE}
+#addSmallLegend(camera_hibtms_plot)
+ggpubr::ggarrange(camera_hm_hibtm_monaco_plot, camera_lowbtm_plot, camera_bloodgen3_plot,
+                  ncol = 3, widths = c(0.78,1,0.78),common.legend = TRUE)
+```
+
+### Combine with BSPZV data and visualize GSEA data as bubble plot. 
+
+Filter based on padj < 0.05.
+
+```{r load bspzv1 gsea data locally, eval=FALSE, include=FALSE, echo=FALSE}
+GSEAtab_BSPZV1 <- read_rds("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/BSPZV1 analysis/BSPZV1 Data/BSPZV1_GSEA_PvNP.rds")
+```
+
+```{r bind BSPZV1 and VRC312 VRC314 GSEA data, message=FALSE, warning=FALSE}
+#Get BSPZV1 Camera data from googledrive
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1NF0IIJbFDMH_fjPnqS3yPRHb42ajXZug"), path = temp, overwrite = TRUE)
+GSEAtab_BSPZV1 <- readRDS(file = dl$local_path)
+
+GSEA_BSPZV1_VRC312_VRC314 <- bind_rows(GSEAtab_VRC312,
+                     GSEAtab_VRC314) %>%
+  filter(module_type %in% c("highBTMs", "lowBTMs", "MonacoModules", "BloodGen3Module", "MSigDB_Hallmark_v7.4"))  %>%
+  filter(!grepl("TBA", pathway)) %>%
+  dplyr::select(study, module_type, pathway, leadingEdge, size, NES, padj) %>%
+  mutate(neglogpadj = -log10(padj)) %>%
+  dplyr::rename("BH-adj p value (FDR)" = "padj") %>%
+  mutate(pathway = gsub("gd", "γδ", pathway)) %>%
+  mutate(pathway = gsub("Vd2", "Vδ2", pathway)) %>%
+  mutate(pathway = gsub("Vg", "Vγ", pathway)) %>%
+  mutate(pathway = gsub("HALLMARK_", "", pathway)) %>%
+  mutate(pathway = gsub("_", " ", pathway)) %>%
+  mutate(pathway = sub(".*?\\_", "", pathway)) %>%
+  group_by(module_type) %>%
+  mutate(pathway = fct_reorder(pathway, NES, .desc = TRUE)) %>%
+  ungroup() %>%
+  filter(!grepl("TBD", pathway)) %>%
+  mutate(module_type = factor(module_type, levels = c("highBTMs", "MonacoModules", "lowBTMs", "MSigDB_Hallmark_v7.4", "BloodGen3Module"))) %>%
+  droplevels() %>%
+  bind_rows(.,GSEAtab_BSPZV1) %>%
+  arrange(study, module_type, desc(neglogpadj))
+```
+
+```{r write GSEA_BSPZV1_VRC312_VRC314, eval=FALSE, include=FALSE, echo=FALSE}
+GSEA_BSPZV1_VRC312_VRC314 %>%
+  writexl::write_xlsx(.,
+                      paste0(datadir, "PfSPZ_GSEA_PvS_BSZPV1_VRC312_VRC314_sex_adj.xlsx"))
+```
+
+
+```{r plot GSEA dat}
+#plotting options
+basetextsize <- 7.5  
+myfont <- "Helvetica"
+bubble_max_size <- 6
+
+TopPlot <- GSEA_BSPZV1_VRC312_VRC314 %>%
+  filter(`BH-adj p value (FDR)`<0.05) %>%
+  filter(module_type %in% c("highBTMs", "MonacoModules"))  %>%
+  ggplot(., aes(x = study, y = pathway)) +
+  geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+  scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+      scale_fill_gradient2(low = "blue",
+                           mid = "white",
+                           high = "red") +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.background = element_blank(),
+        strip.text = element_text(size=5.5),
+        legend.position = "right",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+facet_wrap(~module_type, scales = "free_y", ncol =2)
+
+MidPlot <- GSEA_BSPZV1_VRC312_VRC314 %>%
+  filter(`BH-adj p value (FDR)`<0.05) %>%
+  filter(module_type %in% c("lowBTMs", "MSigDB_Hallmark_v7.4"))  %>%
+  ggplot(., aes(x = study, y = pathway)) +
+  geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+  scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+      scale_fill_gradient2(low = "blue",
+                           mid = "white",
+                           high = "red") +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.text = element_text(size=5.5),
+        strip.background = element_blank(),
+        legend.position = "right",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+facet_wrap(~module_type, scales = "free_y", nrow =2)
+
+BottomPlot <- GSEA_BSPZV1_VRC312_VRC314 %>%
+  filter(`BH-adj p value (FDR)`<0.05) %>%
+  filter(module_type %in% c("BloodGen3Module"))  %>%
+  ggplot(., aes(x = study, y = pathway)) +
+  geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+  scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+      scale_fill_gradient2(low = "blue",
+                           mid = "white",
+                           high = "red") +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.text = element_text(size=5.5),
+        strip.background = element_blank(),
+        legend.position = "right",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+facet_wrap(~module_type, scales = "free_y", ncol =2)
+```
+
+### Plot GSEA bubbleplots (Figures S4B of revised manuscript)
+
+Red: enriched in protected/uninfected 
+Blue: enriched in not protected/infected
+Only modules with BH-adjusted p value (FDR) < 0.05 are shown.
+
+```{r plot gsea bubbleplot top plat, fig.align='center', fig.width=5.75, fig.height=3.55, echo=FALSE, message=FALSE, warning=FALSE}
+addSmallLegend(TopPlot)
+```
+
+```{r plot gsea bubbleplot mid plot, fig.align='center', fig.width=4.75, fig.height=12.75, echo=FALSE, message=FALSE, warning=FALSE}
+addSmallLegend(MidPlot)
+```
+
+```{r plot gsea bubbleplot bottom plott, fig.align='center', fig.width = 4, fig.height = 9, echo=FALSE, message=FALSE, warning=FALSE}
+addSmallLegend(BottomPlot)
+```
+
+
+```{r save gsea plots, echo=FALSE, eval=FALSE, include=FALSE}
+pdf(file = paste0(figdir, "Fig_S4B_GSEA_highBTMs_Monaco_VRC312_VRC314_BSPZV1.pdf"), height = 3.75, width = 5.25)
+addSmallLegend(TopPlot)
+dev.off()
+
+pdf(file = paste0(figdir, "Fig_S4BGSEA_lowBTMs_Hallmark_VRC312_VRC314_BSPZV1.pdf"), height = 10.25, width = 4.5)
+addSmallLegend(MidPlot)
+dev.off()
+
+pdf(file = paste0(figdir, "Fig_S4B_GSEA_BloodGen3Modules_VRC312_VRC314_BSPZV1.pdf"), height = 9.75, width = 3.5)
+addSmallLegend(BottomPlot)
+dev.off()
+```

@@ -1,0 +1,600 @@
+---
+title: "BSZPV1 reanalysis"
+author: "Tuan M. Tran"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Re-analyze BSPZV1 data using our pipeline
+
+Counts data downloaded from: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE196126 ([Supplementary file](https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE196126&format=file&file=GSE196126%5FBSPZV1%5FrawCounts%5FGeneNames%5FAllSamples%2Ecsv%2Egz))
+
+Metadata downloaded from: https://ftp.ncbi.nlm.nih.gov/geo/series/GSE196nnn/GSE196126/matrix/
+
+
+```{r load libraries}
+library(tidyverse)
+library(EDASeq)
+library(edgeR)
+library(limma)
+library(Biobase)
+library(ggplot2)
+library(ggpubr)
+```
+
+## Read in and clean data
+
+```{r readin data, echo=FALSE}
+datadir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/BSPZV1 analysis/BSPZV1 Data/"
+counts_dat <- read_csv(paste0(datadir, "GSE196126_BSPZV1_rawCounts_GeneNames_AllSamples.csv"))
+csp_ab_dat <- readxl::read_excel(paste0(datadir, "BSPZV1 Tanzania PfCSP ELISA baseline OD1.0 values.xlsx"), sheet = 2)
+meta_dat <- read.delim(paste0(datadir, "GSE196126_series_matrix.txt"), skip=29, check.names = FALSE) %>%
+  data.frame(., check.names = FALSE) %>%
+  mutate("!Sample_title" = make.names(gsub("\\!","",`!Sample_title`), unique=TRUE)) %>%
+  column_to_rownames(var = "!Sample_title") %>%
+  t() %>%
+  data.frame() %>%
+  rownames_to_column(var="Sample_longname") %>%
+  mutate(Sample_ID = stringr::str_extract_all(Sample_longname, "(?<=\\[).+?(?=\\])")) %>%
+  mutate(Subject_ID = gsub("X", "", gsub(" .*", "", Sample_longname))) %>%
+  mutate(timepoint = sub(".*? ", "", Sample_longname)) %>% #remove everything before first space
+  mutate(timepoint = factor(gsub(" [^ ]*$", "", timepoint))) %>% #remove everything after last space
+  mutate(temp_rownames = Sample_ID) %>%
+  dplyr::rename(Outcome = "Sample_characteristics_ch1.2") %>%
+  left_join(., csp_ab_dat, by = "Subject_ID") %>%
+  dplyr::select(temp_rownames, Sample_ID, Subject_ID, timepoint, Sample_longname, Outcome, CSP_titer_baseline, CSP_titer_2wks_postvax, CSP_titer_ratio, everything()) %>%
+  mutate(Outcome = gsub("protection\\: ", "", Outcome)) %>%
+  column_to_rownames(var = "temp_rownames")
+
+feature_dat <- counts_dat[,1:2] %>%
+  mutate(ensembl_id = .$...1) %>%
+  column_to_rownames(var = '...1') %>%
+  dplyr::rename(gene_symbol = "symbol")
+
+counts_dat <- counts_dat %>%
+  column_to_rownames(var = '...1') %>%
+  dplyr::select(-c(symbol))
+
+#check for sample differences and order sample names identically
+setdiff(colnames(counts_dat), rownames(meta_dat))
+setdiff(rownames(meta_dat), colnames(counts_dat))
+all_samples <- intersect(rownames(meta_dat), colnames(counts_dat))
+counts_dat <- counts_dat[,all_samples]
+meta_dat <- meta_dat[all_samples,]
+```
+
+## Make counts expression set
+
+```{r make count expression set}
+bspzv1_eset <- newSeqExpressionSet(counts = as.matrix(counts_dat), phenoData = meta_dat, featureData = feature_dat)
+```
+
+## Reduce to Day 0 samples
+
+```{r reduce samples}
+bspzv1_eset <- bspzv1_eset[, bspzv1_eset$timepoint == "day 0"]
+bspzv1_eset$timepoint <- droplevels(bspzv1_eset$timepoint)
+bspzv1_eset
+```
+
+## Assess differences in pre-immunization baseline CSP-specific IgG
+
+```{r assess csp igg levels baseline paired plot, fig.align='center', fig.width=10, fig.height=5}
+meta_dat %>%
+  filter(timepoint=="day 0") %>%
+  dplyr::select(-c(timepoint)) %>%
+  pivot_longer(., cols = c(CSP_titer_baseline, CSP_titer_2wks_postvax), names_to = "timepoint", values_to = "CSP_Ab_titer") %>%
+  mutate(timepoint = gsub("CSP\\_titer\\_", "", timepoint)) %>%
+  ggpubr::ggpaired(., x = "timepoint", y = "CSP_Ab_titer", color = "timepoint", line.color = "gray", line.size = 0.4, palette = "npg",
+                   facet.by = "Outcome", id	= "Subject_ID") 
+```
+
+```{r make plots for pre post fold change csp}
+preCSP_plot <- meta_dat %>%
+  filter(timepoint=="day 0") %>%
+  ggplot(., aes(x = Outcome, y = CSP_titer_baseline)) +
+  geom_boxplot() +
+  ggbeeswarm::geom_beeswarm() +
+  ggpubr::stat_compare_means() +
+  theme_bw()
+
+postCSP_plot <- meta_dat %>%
+  filter(timepoint=="day 0") %>%
+  ggplot(., aes(x = Outcome, y = CSP_titer_2wks_postvax)) +
+  geom_boxplot() +
+  ggbeeswarm::geom_beeswarm() +
+  ggpubr::stat_compare_means() +
+  theme_bw()
+
+FC_CSP_plot <- meta_dat %>%
+  filter(timepoint=="day 0") %>%
+  ggplot(., aes(x = Outcome, y = CSP_titer_ratio)) +
+  geom_boxplot() +
+  ggbeeswarm::geom_beeswarm() +
+  ggpubr::stat_compare_means() +
+  theme_bw()
+
+paired_plot <- meta_dat %>%
+  dplyr::rename("pre-vax" = "CSP_titer_baseline",
+                "2 weeks post-vax" = "CSP_titer_2wks_postvax") %>%
+  ggpaired(., cond1 = "pre-vax", cond2 = "2 weeks post-vax", id = "Subject_ID", fill = "Outcome",
+             ylab = "anti-CSP IgG", xlab = "time point", facet.by = "Outcome", palette = "aaas") +
+  theme(legend.position = "none")
+
+```
+
+```{r plot csp response by protection, fig.align='center', fig.width=12, fig.height=8}
+top_plot <- ggarrange(preCSP_plot, postCSP_plot, FC_CSP_plot, ncol=3)
+ggarrange(top_plot, paired_plot, nrow = 2) 
+```
+
+#### Build DGEList Object
+
+```{r make DGEList object, message=FALSE, warning=FALSE}
+#Define group by outcome
+y  <- DGEList(counts=counts(bspzv1_eset),
+              genes=fData(bspzv1_eset),
+              samples=pData(bspzv1_eset),
+              group= factor(bspzv1_eset$Outcome),
+              remove.zeros=T)
+y <- calcNormFactors(y)	#Normalization
+```
+
+### Filter out low expression features
+
+```{r low expression filters, message=FALSE, warning=FALSE}
+n_genes_start <- nrow(y)
+keep <- filterByExpr(y, group = y$samples$group)
+y <- y[keep, , keep.lib.sizes=FALSE]
+print(paste0(n_genes_start- nrow(y), " genes removed."))
+y$samples$lib.size <- colSums(y$counts)
+y <- calcNormFactors(y)	#Normalization
+```
+
+### Analysis between Not Protected and Protected within a Dose Group
+
+
+```{r, build design matrix protected vs not protected by group, message=FALSE, warning=FALSE}
+Subject <- factor(y$samples$Subject_ID)
+Outcome <- factor(y$samples$Outcome, levels = c("NP","P"))
+CSP_Ab <- y$samples$CSP_titer_baseline
+design <- model.matrix(~0 + CSP_Ab + Outcome)
+rownames(design) <- y$samples$Subject_ID
+colnames(design)
+y     <- estimateDisp(y,design, robust = TRUE)
+fit   <- glmQLFit(y, design, robust = TRUE)
+qlf <- glmQLFTest(fit, contrast = c(rep(0, ncol(design)-2), -1, 1))
+degtab <- topTags(qlf, n = nrow(y))$table
+```
+
+```{r save bspzv1 degtab, eval=FALSE, include=FALSE,echo=FALSE}
+#saveRDS(degtab, paste0(datadir, "BSPZV1_edgeR_DEGs_PvNP_all.rds"))
+```
+
+### Examine top 15 DEGs, protected vs not protected
+
+```{r DEG table, echo = FALSE}
+degtab %>%
+  dplyr::select(gene_symbol, logFC, PValue, FDR) %>%
+  head(., n=15)
+```
+
+### Competive Gene Set Testing between Protected vs Not Protected using CAMERA
+
+```{r, camera protected vs not protected by group, message=FALSE, warning=FALSE}
+mymodules <- c("highBTMs", "lowBTMs", "MonacoModules", "BloodGen3Module", "MSigDB_Hallmark_v7.4")
+cameratab_list <- vector("list", length(mymodules))
+names(cameratab_list) <- mymodules
+for(i in mymodules){
+  url <- paste0("https://github.com/TranLab/ModuleLists/blob/main/", i, ".rds?raw=true")
+  temp_list <- readRDS(url(url, method="libcurl"))
+  temp_indices <- ids2indices(temp_list, y$genes$gene_symbol)
+  cameratab <- camera(y, temp_indices, design, contrast = c(rep(0, ncol(design)-2), -1, 1), inter.gene.cor=0.01)
+  cameratab_list[[i]] <- cameratab %>%
+    rownames_to_column(var = "module")
+}
+cameratab_bind <- bind_rows(cameratab_list, .id = "module_type") %>%
+  dplyr::select(module_type, everything())
+```
+
+### CAMERA bubble plots, FDR<5%, protected vs not protected
+
+```{r plot camera dat, fig.align='center', fig.height=8, fig.width=10}
+#plotting options
+basetextsize <- 12 
+myfont <- "Helvetica"
+bubble_max_size <- 15
+
+myCameraPlotDat <- cameratab_bind %>%
+  filter(module_type %in% c("highBTMs", "lowBTMs", "MonacoModules", "BloodGen3Module", "MSigDB_Hallmark_v7.4"))  %>%
+  #filter(!grepl("TBA", module)) %>%
+  dplyr::select(module_type, module, NGenes, Direction, FDR) %>%
+  mutate(neglogpadj = -log10(FDR)) %>%
+  mutate(fdr_direction = ifelse(Direction == "Up", neglogpadj*1, neglogpadj*-1)) %>%
+  mutate(module = gsub("gd", "γδ", module)) %>%
+  mutate(module = gsub("Vd2", "Vδ2", module)) %>%
+  mutate(module = gsub("Vg", "Vγ", module)) %>%
+  mutate(module = gsub("HALLMARK_", "", module)) %>%
+  mutate(module = gsub("_", " ", module)) %>%
+  mutate(module = sub(".*?\\_", "", module)) %>%
+  mutate(module = fct_reorder(module, fdr_direction, .desc = TRUE)) %>%
+  filter(!grepl("TBD", module)) %>%
+  mutate(module_type = factor(module_type, levels = c("highBTMs", "MonacoModules", "lowBTMs", "MSigDB_Hallmark_v7.4", "BloodGen3Module"))) %>%
+  arrange(desc(neglogpadj)) %>% 
+  mutate(study = "BSPZV1") %>%
+  droplevels() %>%
+  dplyr::select(study, module_type, module, everything())
+
+Top_Cam_Plot <- myCameraPlot <- myCameraPlotDat %>%
+  filter(module_type %in% c("highBTMs", "MonacoModules")) %>%
+  filter(FDR < 0.05) %>%
+  ggplot(., aes(x = module, y = study)) +
+  geom_point(aes(size=neglogpadj, fill = Direction), alpha = 0.65, shape=21, stroke = 0.25) +
+  scale_size_area(name = expression(-log[10]~adj.~p~value), max_size = bubble_max_size) +
+      scale_fill_manual(values = c("blue","red")) +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.background = element_blank(),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  facet_wrap(~module_type, scales = "free_x")
+```
+
+```{r save bspzv1 cameraplotdat, eval=FALSE, include=FALSE,echo=FALSE}
+saveRDS(myCameraPlotDat, paste0(datadir, "BSPZV1_Camera_PvNP.rds"))
+```
+
+### Apply GSEA, protected vs not protected
+
+Rank genes by -log10(PValue)*sign(logFC). Run fgsea from fgsea package using NamedGeneRankList2GseaTable helper function.
+
+```{r apply fgsea, warning=FALSE, message=FALSE}
+set.seed(23)
+ranks <- degtab
+ranks <- degtab %>% 
+  mutate(rankmetric = -log10(.$PValue)*sign(.$logFC)) %>%
+  dplyr::select(gene_symbol,rankmetric) %>% 
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(gene_symbol) %>%  
+  summarize(rankmetric = mean(rankmetric)) %>%
+  arrange(desc(rankmetric)) %>%
+  deframe()
+
+#Run fgsea from fgsea package using NamedGeneRankList2GseaTable helper function
+devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/NamedGeneRankList2GseaTable.R?raw=TRUE")
+GSEAtab <- ranks
+GSEAtab <- NamedGeneRankList2GseaTable(rankedgenes = ranks,
+                                       geneset = "all",
+                                       output_directory = tempdir(),
+                                       filename_prefix = "GSEA",
+                                       sampleSize = 101,
+                                       minSize = 20,
+                                       maxSize = Inf,
+                                       scoreType = "std") %>%
+  as_tibble() %>%
+  arrange(desc(NES)) %>% 
+  dplyr::select(module_type, pathway, ES, NES, size, leadingEdge, pval, padj) %>% 
+  mutate(leadingEdge = gsub("^c\\(|\\)$", "", leadingEdge)) %>%
+  mutate(leadingEdge = gsub('"', "", leadingEdge)) %>%
+  arrange(padj)
+```
+
+### Visualize GSEA data as bubble plot, protected vs not protected
+
+Filter based on padj < 0.05.
+
+```{r visualize GSEA data, message=FALSE, warning=FALSE}
+myGSEAplotDat <- GSEAtab %>%
+  filter(module_type %in% c("highBTMs", "lowBTMs", "MonacoModules", "BloodGen3Module", "MSigDB_Hallmark_v7.4"))  %>%
+  filter(!grepl("TBA", pathway)) %>%
+  dplyr::select(module_type, pathway, leadingEdge, size, NES, padj) %>%
+  mutate(neglogpadj = -log10(padj)) %>%
+  dplyr::rename("BH-adj p value (FDR)" = "padj") %>%
+  mutate(pathway = gsub("gd", "γδ", pathway)) %>%
+  mutate(pathway = gsub("Vd2", "Vδ2", pathway)) %>%
+  mutate(pathway = gsub("Vg", "Vγ", pathway)) %>%
+  mutate(pathway = gsub("HALLMARK_", "", pathway)) %>%
+  mutate(pathway = gsub("_", " ", pathway)) %>%
+  mutate(pathway = sub(".*?\\_", "", pathway)) %>%
+  group_by(module_type) %>%
+  mutate(pathway = fct_reorder(pathway, NES, .desc = TRUE)) %>%
+  ungroup() %>%
+  filter(!grepl("TBD", pathway)) %>%
+  mutate(module_type = factor(module_type, levels = c("highBTMs", "MonacoModules", "lowBTMs", "MSigDB_Hallmark_v7.4", "BloodGen3Module"))) %>%
+  arrange(desc(neglogpadj)) %>% 
+  droplevels() %>%
+  mutate(study = "BSPZV1") %>%
+  dplyr::select(study, module_type, pathway, everything())
+
+#plotting options
+basetextsize <- 7.5  
+myfont <- "Helvetica"
+bubble_max_size <- 6
+
+TopPlot <- myGSEAplotDat %>%
+  filter(module_type %in% c("highBTMs", "MonacoModules"))  %>%
+  filter(`BH-adj p value (FDR)` < 0.05) %>%
+  ggplot(., aes(x = pathway, y = study)) +
+  geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+  scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+      scale_fill_gradient2(low = "blue",
+                           mid = "white",
+                           high = "red") +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.background = element_blank(),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+facet_wrap(~module_type, scales = "free_x")
+
+MidPlot <- myGSEAplotDat %>%
+  filter(module_type %in% c("lowBTMs", "MSigDB_Hallmark_v7.4"))  %>%
+  filter(`BH-adj p value (FDR)` < 0.05) %>%
+  ggplot(., aes(x = pathway, y = study)) +
+  geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+  scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+      scale_fill_gradient2(low = "blue",
+                           mid = "white",
+                           high = "red") +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.background = element_blank(),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+facet_wrap(~module_type, scales = "free_x")
+
+BottomPlot <- myGSEAplotDat %>%
+  filter(`BH-adj p value (FDR)` < 0.05) %>%
+  filter(module_type %in% c("BloodGen3Module"))  %>%
+  ggplot(., aes(x = pathway, y = study)) +
+  geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+  scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+      scale_fill_gradient2(low = "blue",
+                           mid = "white",
+                           high = "red") +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.background = element_blank(),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+facet_wrap(~module_type, scales = "free_x")
+```
+
+```{r save gseaplotdat bspzv1, include=FALSE, eval=FALSE, echo=FALSE}
+saveRDS(myGSEAplotDat, paste0(datadir, "BSPZV1_GSEA_PvNP.rds"))
+```
+
+## Analysis between high and low CSP responder
+
+Compare top tercile to bottom tercile
+
+```{r CSP Ab response distribution}
+density_dat <- meta_dat %>%
+  filter(timepoint == "day 0") 
+
+summary_CSP_titer_ratio <- summary(density_dat$CSP_titer_ratio)
+
+density_dat %>%
+  pivot_longer(., cols = contains("CSP"), names_to = "variable", values_to = "value") %>%
+  mutate(variable = gsub("CSP_titer_", "", variable)) %>%
+  dplyr::select(Subject_ID, Sample_longname, Outcome, variable, value) %>%
+  filter(variable == "ratio") %>%
+  ggplot(., aes(x=value)) +
+  geom_histogram(binwidth = 1) +
+  scale_x_continuous(breaks = seq(0,300,25)) +
+  geom_vline(xintercept = summary_CSP_titer_ratio[[2]], color="red", linetype="dotted") +
+  geom_vline(xintercept = summary_CSP_titer_ratio[[5]], color="red", linetype="dotted") +
+  theme_bw() 
+```
+
+We use 100 as the threshold for fold-change CSP Ab response based on the distribution
+
+```{r high vs low csp response}
+my_threshold <- 25
+CSP_response <- factor(gtools::quantcut(y$samples$CSP_titer_ratio, q = 3), labels = c("bottom_tercile", "middle_tercile", "top_tercile"))
+
+Outcome <- factor(y$samples$Outcome, levels = c("NP","P"))
+CSP_Ab <- y$samples$CSP_titer_baseline
+design <- model.matrix(~CSP_response)
+rownames(design) <- y$samples$Subject_ID
+colnames(design) <- gsub("CSP_response", "", colnames(design))
+y     <- estimateDisp(y,design, robust = TRUE)
+fit   <- glmQLFit(y, design, robust = TRUE)
+qlf <- glmQLFTest(fit, coef = "top_tercile")
+degtab <- topTags(qlf, n = nrow(y))$table
+```
+
+### Examine top 15 DEGs (protected vs not protected), high vs low CSP responder
+
+```{r DEG table, echo = FALSE}
+degtab %>%
+  dplyr::select(gene_symbol, logFC, PValue, FDR) %>%
+  head(., n=15)
+```
+
+### Gene Set Testing between high vs low CSP responder
+
+```{r, camera protected vs not protected by group high vs low CSP responder, message=FALSE, warning=FALSE}
+i <- "highBTMs"
+url <- paste0("https://github.com/TranLab/ModuleLists/blob/main/", i, ".rds?raw=true")
+highBTM_list <- readRDS(url(url, method="libcurl"))
+highBTM.indices <- ids2indices(highBTM_list, y$genes$gene_symbol)
+    
+# c2.indices <- ids2indices(highBTM_list, ygroup$`1.8 x 10^6 PfSPZ`$genes$GeneSymbol)
+# camera(ygroup$`1.8 x 10^6 PfSPZ`, c2.indices, design)
+# c2.indices <- ids2indices(highBTM_list, ygroup$Placebo$genes$GeneSymbol)
+# camera(ygroup$Placebo, c2.indices, design)
+cameratab <- camera(y, highBTM.indices, design, contrast = c(rep(0, ncol(design)-2), -1, 1), inter.gene.cor=0.01)
+
+cameratab <- cameratab %>%
+    rownames_to_column(var = "module")
+```
+
+### CAMERA bubble plots, FDR<5%, high vs low CSP responder
+
+```{r plot camera dat high vs low CSP responder, fig.align='center', fig.height=8, fig.width=10}
+#plotting options
+basetextsize <- 12 
+myfont <- "Helvetica"
+bubble_max_size <- 15
+
+myCameraPlotDat <- cameratab %>%
+  filter(FDR < 0.05) %>%
+  #filter(module_type %in% c("highBTMs", "lowBTMs", "MonacoModules", "BloodGen3Module", "MSigDB_Hallmark_v7.4"))  %>%
+  #filter(!grepl("TBA", module)) %>%
+  dplyr::select(module, NGenes, Direction, FDR) %>%
+  mutate(neglogpadj = -log10(FDR)) %>%
+  mutate(fdr_direction = ifelse(Direction == "Up", neglogpadj*1, neglogpadj*-1)) %>%
+  mutate(module = gsub("gd", "γδ", module)) %>%
+  mutate(module = gsub("Vd2", "Vδ2", module)) %>%
+  mutate(module = gsub("Vg", "Vγ", module)) %>%
+  mutate(module = gsub("HALLMARK_", "", module)) %>%
+  mutate(module = gsub("_", " ", module)) %>%
+  mutate(module = sub(".*?\\_", "", module)) %>%
+  mutate(module = fct_reorder(module, fdr_direction, .desc = TRUE)) %>%
+  filter(!grepl("TBD", module)) %>%
+  #mutate(module_type = factor(module_type, levels = c("highBTMs", "MonacoModules", "lowBTMs", "MSigDB_Hallmark_v7.4", "BloodGen3Module"))) %>%
+  arrange(desc(neglogpadj)) %>% 
+  mutate(study = "BSPZV1") %>%
+  droplevels()
+
+myCameraPlot <- myCameraPlotDat %>%
+  #filter(module_type %in% c("BloodGen3Module"))  %>%
+  ggplot(., aes(x = module, y = study)) +
+  geom_point(aes(size=neglogpadj, fill = Direction), alpha = 0.65, shape=21, stroke = 0.25) +
+  scale_size_area(name = expression(-log[10]~adj.~p~value), max_size = bubble_max_size) +
+      scale_fill_manual(values = c("blue","red")) +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.background = element_blank(),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+```
+
+### Apply GSEA, high vs low CSP responder
+
+Rank genes by -log10(PValue)*sign(logFC). Run fgsea from fgsea package using NamedGeneRankList2GseaTable helper function.
+
+```{r apply fgsea high vs low CSP responder, warning=FALSE, message=FALSE}
+set.seed(23)
+ranks <- degtab
+ranks <- degtab %>% 
+  mutate(rankmetric = -log10(.$PValue)*sign(.$logFC)) %>%
+  dplyr::select(gene_symbol,rankmetric) %>% 
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(gene_symbol) %>%  
+  summarize(rankmetric = mean(rankmetric)) %>%
+  arrange(desc(rankmetric)) %>%
+  deframe()
+
+#Run fgsea from fgsea package using NamedGeneRankList2GseaTable helper function
+devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/NamedGeneRankList2GseaTable.R?raw=TRUE")
+GSEAtab <- ranks
+GSEAtab <- NamedGeneRankList2GseaTable(rankedgenes = ranks,
+                                       geneset = "all",
+                                       output_directory = tempdir(),
+                                       filename_prefix = "GSEA",
+                                       sampleSize = 101,
+                                       minSize = 20,
+                                       maxSize = Inf,
+                                       scoreType = "std") %>%
+  as_tibble() %>%
+  arrange(desc(NES)) %>% 
+  dplyr::select(module_type, pathway, ES, NES, size, leadingEdge, pval, padj) %>% 
+  mutate(leadingEdge = gsub("^c\\(|\\)$", "", leadingEdge)) %>%
+  mutate(leadingEdge = gsub('"', "", leadingEdge)) %>%
+  arrange(padj)
+```
+
+### Visualize GSEA data as bubble plot, high vs low CSP responder
+
+Filter based on padj < 0.05.
+
+```{r visualize GSEA data high vs low CSP responder, message=FALSE, warning=FALSE}
+plotDat <- GSEAtab %>%
+  filter(padj < 0.05) %>%
+  filter(module_type %in% c("highBTMs", "lowBTMs", "MonacoModules", "BloodGen3Module", "MSigDB_Hallmark_v7.4"))  %>%
+  filter(!grepl("TBA", pathway)) %>%
+  dplyr::select(module_type, pathway, leadingEdge, size, NES, padj) %>%
+  mutate(neglogpadj = -log10(padj)) %>%
+  dplyr::rename("BH-adj p value (FDR)" = "padj") %>%
+  mutate(pathway = gsub("gd", "γδ", pathway)) %>%
+  mutate(pathway = gsub("Vd2", "Vδ2", pathway)) %>%
+  mutate(pathway = gsub("Vg", "Vγ", pathway)) %>%
+  mutate(pathway = gsub("HALLMARK_", "", pathway)) %>%
+  mutate(pathway = gsub("_", " ", pathway)) %>%
+  mutate(pathway = sub(".*?\\_", "", pathway)) %>%
+  group_by(module_type) %>%
+  mutate(pathway = fct_reorder(pathway, NES, .desc = TRUE)) %>%
+  ungroup() %>%
+  filter(!grepl("TBD", pathway)) %>%
+  mutate(module_type = factor(module_type, levels = c("highBTMs", "MonacoModules", "lowBTMs", "MSigDB_Hallmark_v7.4", "BloodGen3Module"))) %>%
+  arrange(desc(neglogpadj)) %>% 
+  droplevels() %>%
+  mutate(study = "BSPZV1")
+
+#plotting options
+basetextsize <- 7.5  
+myfont <- "Helvetica"
+bubble_max_size <- 6
+
+TopPlot <- plotDat %>%
+  filter(module_type %in% c("highBTMs", "MonacoModules"))  %>%
+  ggplot(., aes(x = pathway, y = study)) +
+  geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+  scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+      scale_fill_gradient2(low = "blue",
+                           mid = "white",
+                           high = "red") +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.background = element_blank(),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+facet_wrap(~module_type, scales = "free_x")
+
+MidPlot <- plotDat %>%
+  filter(module_type %in% c("lowBTMs", "MSigDB_Hallmark_v7.4"))  %>%
+  ggplot(., aes(x = pathway, y = study)) +
+  geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+  scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+      scale_fill_gradient2(low = "blue",
+                           mid = "white",
+                           high = "red") +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.background = element_blank(),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+facet_wrap(~module_type, scales = "free_x")
+
+BottomPlot <- plotDat %>%
+  filter(module_type %in% c("BloodGen3Module"))  %>%
+  ggplot(., aes(x = pathway, y = study)) +
+  geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+  scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+      scale_fill_gradient2(low = "blue",
+                           mid = "white",
+                           high = "red") +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.background = element_blank(),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+facet_wrap(~module_type, scales = "free_x")
+```
+

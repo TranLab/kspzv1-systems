@@ -1,0 +1,651 @@
+---
+title: "PfSPZ Compare FACS between P and NP"
+author: "Tuan M. Tran"
+date: "6/28/2022"
+output: html_document
+---
+
+This script generates the plots for comparing P vs NP in FACS.
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(readxl)
+library(ggpubr)
+addSmallLegend <- function(myPlot, pointSize = 3, textSize = 6, spaceLegend = 0.6) {
+    myPlot +
+        guides(shape = guide_legend(override.aes = list(size = pointSize)),
+               color = guide_legend(override.aes = list(size = pointSize))) +
+        theme(legend.title = element_text(size = textSize), 
+              legend.text  = element_text(size = textSize),
+              legend.key.size = unit(spaceLegend, "lines"))
+}
+
+datadir <- "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/"
+resdir <- "/Volumes/GoogleDrive/My Drive/Manuscripts/KSPZV1 Manuscript/Manuscript Data for Figures/"
+figdir <- "/Volumes/GoogleDrive/My Drive/Manuscripts/KSPZV1 Manuscript/Figures/"
+load(paste0(datadir, "Final Data Files/PfSPZ Expression Set and DGElist SeqMonk 1 to 6.RData"))
+x <- pfspz_eset_SM6
+alldat <- readRDS(file = "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/PfSPZ_FACS_PlasmaCytokine_MonocyteActivation_03312021.Rds")
+```
+
+## Objective
+
+Make faceted ggplot2 for Phil Swanson's flow data.
+
+## Remove outliers
+
+```{r remove outliers, echo = FALSE}
+myOutliers <- c("K1W0869_25", "K1W0481_0", "K1S0300_25") #"K1S0300_25" is sample with really big counts
+x <- x[,which(!colnames(x)%in%myOutliers)]
+```
+
+## Wrangle data and merge FACS to phenoData
+
+              
+```{r data wrangle, echo=FALSE}
+longdat <- pData(x) %>%
+  mutate(Outcome = factor(ifelse(.$mal.atp.3 == 1, "infected", "uninfected"), levels = c("infected", "uninfected"))) %>%
+  mutate(treat = factor(treat,levels = c("Placebo", "4.5 x 10^5 PfSPZ", "9.0 x 10^5 PfSPZ", "1.8 x 10^6 PfSPZ"))) %>%
+  dplyr::rename(Dosegroup = treat) %>%
+  dplyr::select(PATID.OG, Timepoint, Dosegroup, Outcome) %>%
+  full_join(., alldat %>%
+            dplyr::select(c(PATID.OG, starts_with("FACS_"))),
+            by = c("PATID.OG")) %>%
+  pivot_longer(., cols = starts_with("FACS_"), names_to = "FACS_feature", values_to = "FACS_value") %>%
+              mutate(FACS_feature = gsub("FACS_","", FACS_feature)) %>%
+              mutate(FACS_feature = gsub("_"," ", FACS_feature))
+```
+
+## Plot baseline FACS features
+
+```{r plot baseline boxplot, echo = FALSE}
+facs_features_keep1 <- c("CD19+ of live PBMCs", "atypical memory of B cells", "memory of B cells", "naive of B cells", "PBs of B cells", "immature of B cells",
+                        "CD14+ of live PBMCs", "CD14+CD16+ of live monocytes", "CD14+CD16- of live monocytes", "CD14-CD16+ of live monocytes",
+                        "CD11c+ of live monocytes", "CD3+CD4+ of live lymphocytes", "CD3+CD8+ of live lymphocytes",
+                        "CD56+CD16+ of live lymphocytes",
+                        "TCRgd", "Vd2 of TCRgd")
+
+facs_features_keep2 <- c("CD19+ of live PBMCs", "atypical memory of B cells", "memory of B cells", "naive of B cells", "PBs of B cells", "immature of B cells",
+                        "CSP-spec of B cells", "CSP-spec of memory B cells", "IgG of CSP-spec", "IgM of CSP-spec", "IgG+ of memory", "IgM+ of memory",
+                        "CD14+ of live PBMCs", "CD14+CD16+ of live PBMCs", "CD14+CD16- of live PBMCs", "CD14-CD16+ of live PBMCs", "CD11c+ of live PBMCs",
+                        "CD3+CD4+ of live PBMCs", "CD3+CD8+ of live PBMCs",
+                        "CD56+CD16+ of live PBMCs",
+                        "TCRgd", "Vd1 of TCRgd", "Vd2 of TCRgd", "Vg9+Vd2+ of TCRgd", "Vd1/2- of TCRgd")
+
+foo <- longdat %>%
+  #dplyr::filter(Timepoint == "Baseline" & !grepl("PfSPZ-specific", .$FACS_feature)) %>%
+  dplyr::filter(Timepoint == "Baseline" & FACS_feature %in% facs_features_keep1) %>%
+  na.omit %>%
+  group_by(Outcome, Dosegroup, FACS_feature) %>%
+  mutate(pos = 1:n(), label = ifelse(pos==1, n(), "")) %>%
+  mutate(Outcome = factor(Outcome, levels = c("infected","uninfected"),labels = c("NP","P"))) %>%
+  mutate(FACS_feature = factor(FACS_feature,
+                               levels = c("CD19+ of live PBMCs", "atypical memory of B cells", "memory of B cells", "naive of B cells", "PBs of B cells",
+                                          "immature of B cells",
+                                          "CD14+ of live PBMCs", "CD14+CD16+ of live monocytes", "CD14+CD16- of live monocytes", "CD14-CD16+ of live monocytes",
+                                          "CD11c+ of live monocytes", "CD3+CD4+ of live lymphocytes", "CD3+CD8+ of live lymphocytes",
+                                          "CD56+CD16+ of live lymphocytes",
+                                          "TCRgd", "Vd2 of TCRgd"))) %>%
+  dplyr::select(-pos) %>%
+  ungroup()
+
+myPlot <- foo %>%
+  ggplot(., aes(x = Dosegroup, y = FACS_value, color = Outcome, fill = Outcome)) +
+  geom_point(position = position_jitterdodge(), size = 1.25) +
+  geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA, lwd = 0.25, fatten = 2) +
+  #stat_compare_means(aes(label = ..p.format.., group = Outcome), method = "wilcox.test", label.x.npc = "center", vjust = 1) +
+  stat_compare_means(aes(label = ..p.signif.., group = Outcome), method = "wilcox.test", label.x.npc = "center", vjust = 1,
+                     symnum.args = list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 1), symbols = c("****", "***", "**", "*", ""))) +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  ylab("% of parent") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        strip.background = element_blank()) +
+  facet_wrap(~FACS_feature, scales = "free_y", nrow = 5)
+
+myPlot
+```
+
+```{r save figure}
+cairo_pdf(filename = paste0(figdir,"Supplementary Figure Baseline Flow Data Wilcox 06282022.pdf"), height = 8, width = 8, onefile = TRUE) 
+print(myPlot)
+dev.off()
+```
+
+### Baseline FACS features as heatmap
+
+```{r plot baseline boxplot, echo = FALSE}
+facs_features_keep <- c("CD19+ of live PBMCs", "atypical memory of B cells", "memory of B cells", "naive of B cells", "PBs of B cells", "immature of B cells",
+                        "CSP-spec of B cells", "CSP-spec of memory B cells", "IgG+ of memory", "IgM+ of memory",
+                        "CD14+ of live PBMCs", "CD14+CD16+ of live monocytes", "CD14+CD16- of live monocytes", "CD14-CD16+ of live monocytes", "CD11c+ of live monocytes",
+                        "CD3+CD4+ of live PBMCs", "CD3+CD8+ of live PBMCs",
+                        "CD56+CD16+ of live PBMCs",
+                        "TCRgd", "Vd1 of TCRgd", "Vd2 of TCRgd", "Vg9+Vd2+ of TCRgd", "Vd1/2- of TCRgd")
+foo <- longdat %>%
+  #dplyr::filter(Timepoint == "Baseline" & !grepl("PfSPZ-specific", .$FACS_feature)) %>%
+  dplyr::filter(Timepoint == "Baseline" & FACS_feature %in% facs_features_keep) %>%
+  mutate(FACS_feature = gsub("PBs", "plasmablasts", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("specific", "stimulated", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("CSP-spec", "CSP-specific", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("Vd", "Vδ", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("gd", "γδ", FACS_feature)) %>%
+  mutate(category = ifelse(grepl("PfSPZ-stimulated", FACS_feature), 
+                           "PfSPZ stimulated", "media control")) %>%
+  na.omit %>%
+  mutate(FACS_feature = fct_reorder2(FACS_feature, FACS_feature, category, .desc = FALSE)) %>%
+  group_by(Outcome, Dosegroup, category, FACS_feature) %>%
+  summarise(median_pct_of_parent = median(FACS_value, na.rm = TRUE), mean_pct_of_parent = mean(FACS_value, na.rm = TRUE)) %>%
+  group_by(FACS_feature) %>%
+  mutate(zscore_median = (median_pct_of_parent - mean(median_pct_of_parent, na.rm = TRUE)) / sd(median_pct_of_parent, na.rm = TRUE)) %>%
+  mutate(zscore_mean = (mean_pct_of_parent - mean(mean_pct_of_parent, na.rm = TRUE)) / sd(mean_pct_of_parent, na.rm = TRUE)) %>%
+  mutate(Outcome = ifelse(Outcome == "uninfected", "P", "NP")) 
+
+myPlot <- foo %>%
+  ggplot(., aes(x = Outcome, y = FACS_feature, fill = zscore_mean)) +
+  geom_tile() +
+  scale_fill_gradient(low="white", high= scales::muted("red")) +
+  #viridis::scale_fill_viridis(discrete=FALSE) +
+  theme_minimal(base_family = "sans", base_size = 9) +
+  theme(strip.text = element_text(angle = 90, vjust = 0.5, hjust=0),
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        strip.background = element_blank()) +
+  scale_y_discrete(limits=rev) +
+  facet_wrap(~Dosegroup, ncol = 4)
+myPlot
+
+# cairo_pdf(filename = paste0(figdir,"Fig SX Baseline Flow Data Heatmap zscore_mean 05132021.pdf"), height = 4, width = 4) 
+# print(addSmallLegend(myPlot))
+# dev.off()
+```
+## Plot post-vax FACS features
+
+```{r plot baseline boxplot, echo = FALSE}
+facs_features_keep <- c("CD19+ of live PBMCs", "atypical memory of B cells", "memory of B cells", "naive of B cells", "PBs of B cells", "immature of B cells",
+                        "CSP-spec of B cells", "CSP-spec of memory B cells", "IgG of CSP-spec", "IgM of CSP-spec", "IgG+ of memory", "IgM+ of memory",
+                        "CD14+ of live PBMCs", "CD14+CD16+ of live monocytes", "CD14+CD16- of live monocytes", "CD14-CD16+ of live monocytes", "CD11c+ of live monocytes",
+                        "CD3+CD4+ of live PBMCs", "CD3+CD8+ of live PBMCs",
+                        "CD56+CD16+ of live PBMCs",
+                        "TCRgd", "Vd1 of TCRgd", "Vd2 of TCRgd", "Vg9+Vd2+ of TCRgd", "Vd1/2- of TCRgd")
+foo <- longdat %>%
+  #dplyr::filter(Timepoint == "Baseline" & !grepl("PfSPZ-specific", .$FACS_feature)) %>%
+  dplyr::filter(Timepoint == "Post_Vaccination" & FACS_feature %in% facs_features_keep) %>%
+  na.omit %>%
+  group_by(Outcome, Dosegroup, FACS_feature) %>%
+  mutate(pos = 1:n(), label = ifelse(pos==1, n(), "")) %>%
+  dplyr::select(-pos) %>%
+  ungroup()
+myPlot <- foo %>%
+  ggplot(., aes(x = Dosegroup, y = FACS_value, color = Outcome, fill = Outcome)) +
+  geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA) +
+  geom_point(position = position_jitterdodge()) +
+  stat_compare_means(aes(label = ..p.format.., group = Outcome), method = "wilcox.test", label.x.npc = "center", vjust = 1) +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  ylab("% of parent") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        strip.background = element_blank()) +
+  facet_wrap(~FACS_feature, scales = "free_y")
+myPlot
+
+
+# cairo_pdf(filename = paste0(figdir,"Supplementary Figure Post-vax Flow Data Wilcox 05142021 FEATURES TO KEEP.pdf"), height = 24, width = 32, onefile = TRUE) 
+# print(myPlot)
+# dev.off()
+```
+
+### Post-vax FACS features as heatmap
+
+```{r plot baseline boxplot, echo = FALSE}
+addSmallLegend <- function(myPlot, pointSize = 3, textSize = 6, spaceLegend = 0.6) {
+    myPlot +
+        guides(shape = guide_legend(override.aes = list(size = pointSize)),
+               color = guide_legend(override.aes = list(size = pointSize))) +
+        theme(legend.title = element_text(size = textSize), 
+              legend.text  = element_text(size = textSize),
+              legend.key.size = unit(spaceLegend, "lines"))
+}
+
+facs_features_keep <- c("CD19+ of live PBMCs", "atypical memory of B cells", "memory of B cells", "naive of B cells", "PBs of B cells", "immature of B cells",
+                        "CSP-spec of B cells", "CSP-spec of memory B cells", "IgG+ of memory", "IgM+ of memory",
+                        "CD14+ of live PBMCs", "CD14+CD16+ of live monocytes", "CD14+CD16- of live monocytes", "CD14-CD16+ of live monocytes", "CD11c+ of live monocytes",
+                        "CD3+CD4+ of live PBMCs", "CD3+CD8+ of live PBMCs",
+                        "CD56+CD16+ of live PBMCs",
+                        "TCRgd", "Vd1 of TCRgd", "Vd2 of TCRgd", "Vg9+Vd2+ of TCRgd", "Vd1/2- of TCRgd",
+                        "PfSPZ-specific CD3+ of live lymphocytes", "PfSPZ-specific CD3+CD8+ of live lymphocytes", "PfSPZ-specific CD3+CD4+ of live lymphocytes",
+                        "PfSPZ-specific TCRgd",
+                        "PfSPZ-specific Vd1 of TCRgd", "PfSPZ-specific Vd2 of TCRgd", "PfSPZ-specific Vg9+Vd2+ of TCRgd",
+                        "PfSPZ-specific Vg9-Vd2+ of TCRgd", "PfSPZ-specific Vd1/2- of TCRgd")
+foo <- longdat %>%
+  #dplyr::filter(Timepoint == "Baseline" & !grepl("PfSPZ-specific", .$FACS_feature)) %>%
+  dplyr::filter(Timepoint == "Post_Vaccination" & FACS_feature %in% facs_features_keep) %>%
+  mutate(FACS_feature = gsub("PBs", "plasmablasts", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("specific", "stimulated", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("CSP-spec", "CSP-specific", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("Vd", "Vδ", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("gd", "γδ", FACS_feature)) %>%
+  mutate(category = ifelse(grepl("PfSPZ-stimulated", FACS_feature), 
+                           "PfSPZ stimulated", "media control")) %>%
+  na.omit %>%
+  mutate(FACS_feature = fct_reorder2(FACS_feature, FACS_feature, category, .desc = FALSE)) %>%
+  group_by(Outcome, Dosegroup, category, FACS_feature) %>%
+  summarise(median_pct_of_parent = median(FACS_value, na.rm = TRUE), mean_pct_of_parent = mean(FACS_value, na.rm = TRUE)) %>%
+  group_by(FACS_feature) %>%
+  mutate(zscore_median = (median_pct_of_parent - mean(median_pct_of_parent, na.rm = TRUE)) / sd(median_pct_of_parent, na.rm = TRUE)) %>%
+  mutate(zscore_mean = (mean_pct_of_parent - mean(mean_pct_of_parent, na.rm = TRUE)) / sd(mean_pct_of_parent, na.rm = TRUE)) %>%
+  mutate(Outcome = ifelse(Outcome == "uninfected", "P", "NP")) 
+
+myPlot <- foo %>%
+  ggplot(., aes(x = Outcome, y = FACS_feature, fill = zscore_mean)) +
+  geom_tile() +
+  scale_fill_gradient(low="white", high= scales::muted("red")) +
+  #viridis::scale_fill_viridis(discrete=FALSE) +
+  theme_minimal(base_family = "sans", base_size = 9) +
+  theme(strip.text = element_text(angle = 90, vjust = 0.5, hjust=0),
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        strip.background = element_blank()) +
+  scale_y_discrete(limits=rev) +
+  facet_wrap(~Dosegroup, ncol = 4)
+myPlot
+
+# 
+# cairo_pdf(filename = paste0(figdir,"Fig SX Postvax Flow Data Heatmap zscore_mean 05132021.pdf"), height = 5.75, width = 4.75) 
+# print(addSmallLegend(myPlot))
+# dev.off()
+```
+
+## LFC cellular response 
+
+Boxplots
+
+```{r,  boxplots of LFC PfSPZ-specific cellular data, echo=FALSE, fig.width=7, fig.height=7}
+facs_features_keep <- c("CD19+ of live PBMCs", "atypical memory of B cells", "memory of B cells", "naive of B cells", "PBs of B cells", "immature of B cells",
+                        "CSP-spec of B cells", "CSP-spec of memory B cells", "IgG+ of memory", "IgM+ of memory",
+                        "CD14+ of live PBMCs", "CD14+CD16+ of live monocytes", "CD14+CD16- of live monocytes", "CD14-CD16+ of live monocytes", "CD11c+ of live monocytes",
+                        "CD3+CD4+ of live PBMCs", "CD3+CD8+ of live PBMCs",
+                        "CD56+CD16+ of live PBMCs",
+                        "TCRgd", "Vd1 of TCRgd", "Vd2 of TCRgd", "Vg9+Vd2+ of TCRgd", "Vd1/2- of TCRgd",
+                        "PfSPZ-specific CD3+ of live lymphocytes", "PfSPZ-specific CD3+CD8+ of live lymphocytes", "PfSPZ-specific CD3+CD4+ of live lymphocytes",
+                        "PfSPZ-specific TCRgd",
+                        "PfSPZ-specific Vd1 of TCRgd", "PfSPZ-specific Vd2 of TCRgd", "PfSPZ-specific Vg9+Vd2+ of TCRgd",
+                        "PfSPZ-specific Vg9-Vd2+ of TCRgd", "PfSPZ-specific Vd1/2- of TCRgd")
+
+myPlot <- longdat %>%
+  dplyr::filter(FACS_feature %in% facs_features_keep) %>%
+  mutate(FACS_feature = gsub("PBs", "plasmablasts", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("specific", "stimulated", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("CSP-spec", "CSP-specific", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("Vd", "Vδ", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("gd", "γδ", FACS_feature)) %>%
+  drop_na(Timepoint) %>%
+  mutate(PATID = gsub("_.*", "", PATID.OG)) %>%
+  dplyr::select(-c(PATID.OG)) %>%
+  pivot_wider(names_from = "Timepoint", values_from = "FACS_value") %>%
+  drop_na(Baseline) %>%
+  drop_na(Post_Vaccination) %>%
+  mutate(LFC = log2((Post_Vaccination+1e-06)/(Baseline+1e-06))) %>%
+  drop_na(LFC) %>%
+  mutate(FACS_feature = gsub("FACS_", "", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("_", " ", FACS_feature)) %>%
+  group_by(Outcome, Dosegroup, FACS_feature) %>%
+  dplyr::mutate(pos = 1:n(), label = ifelse(pos==1, n(), "")) %>%
+  dplyr::select(-pos) %>%
+  ungroup() %>%
+  ggplot(., aes(x = Dosegroup, y = LFC, fill = Outcome, color = Outcome)) +
+  geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA) +
+  geom_point(position = position_jitterdodge()) +
+  stat_compare_means(aes(label = ..p.format.., group = Outcome), method = "wilcox.test", label.x.npc = "center", vjust = 1) +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  geom_text(position = position_dodge(width=1), aes(label=label), vjust = -0.25, color = "black") +
+  theme_bw(base_family = "Arial") +
+  theme(axis.text.x=element_text(angle = 45, vjust = 1, hjust=1),
+          #axis.text.y=element_blank(),
+          axis.ticks.x=element_blank(),
+          axis.title.x=element_blank(),
+          #strip.text.x = element_blank(),
+          strip.background = element_blank(),
+          legend.position="none"
+          ) +
+  facet_wrap(~FACS_feature, scales = "free_y", ncol= 8)
+
+# cairo_pdf(paste0(figdir,"KSPZV1 PfSPZ-specific cellular data logFC 05142021 reduced.pdf"), height = 10, width = 20)
+# myPlot
+# dev.off()
+```
+
+LFC Heatmaps
+
+```{r, heatmaps of LFC PfSPZ-specific cellular data, echo=FALSE, fig.width=7, fig.height=7}
+facs_features_keep <- c("CD19+ of live PBMCs", "atypical memory of B cells", "memory of B cells", "naive of B cells", "PBs of B cells", "immature of B cells",
+                        "CSP-spec of B cells", "CSP-spec of memory B cells", "IgG+ of memory", "IgM+ of memory",
+                        "CD14+ of live PBMCs", "CD14+CD16+ of live monocytes", "CD14+CD16- of live monocytes", "CD14-CD16+ of live monocytes", "CD11c+ of live monocytes",
+                        "CD3+CD4+ of live PBMCs", "CD3+CD8+ of live PBMCs",
+                        "CD56+CD16+ of live PBMCs",
+                        "TCRgd", "Vd1 of TCRgd", "Vd2 of TCRgd", "Vg9+Vd2+ of TCRgd", "Vd1/2- of TCRgd",
+                        "PfSPZ-specific CD3+ of live lymphocytes", "PfSPZ-specific CD3+CD8+ of live lymphocytes", "PfSPZ-specific CD3+CD4+ of live lymphocytes",
+                        "PfSPZ-specific TCRgd",
+                        "PfSPZ-specific Vd1 of TCRgd", "PfSPZ-specific Vd2 of TCRgd", "PfSPZ-specific Vg9+Vd2+ of TCRgd",
+                        "PfSPZ-specific Vg9-Vd2+ of TCRgd", "PfSPZ-specific Vd1/2- of TCRgd")
+
+foo <- longdat %>%
+  dplyr::filter(FACS_feature %in% facs_features_keep) %>%
+  mutate(FACS_feature = gsub("PBs", "plasmablasts", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("specific", "stimulated", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("CSP-spec", "CSP-specific", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("Vd", "Vδ", FACS_feature)) %>%
+  mutate(FACS_feature = gsub("gd", "γδ", FACS_feature)) %>%
+  drop_na(Timepoint) %>%
+  mutate(PATID = gsub("_.*", "", PATID.OG)) %>%
+  dplyr::select(-c(PATID.OG)) %>%
+  pivot_wider(names_from = "Timepoint", values_from = "FACS_value") %>%
+  drop_na(Baseline) %>%
+  drop_na(Post_Vaccination) %>%
+  mutate(LFC = log2((Post_Vaccination+1e-06)/(Baseline+1e-06))) %>%
+  drop_na(LFC) %>%
+  mutate(category = ifelse(grepl("PfSPZ-stimulated", FACS_feature), 
+                           "PfSPZ stimulated", "media control")) %>%
+  na.omit %>%
+  mutate(FACS_feature = fct_reorder2(FACS_feature, FACS_feature, category, .desc = FALSE)) %>%
+  group_by(Outcome, Dosegroup, category, FACS_feature) %>%
+  summarise(median_LFC = median(LFC, na.rm = TRUE), mean_LFC = mean(LFC, na.rm = TRUE)) %>%
+  group_by(FACS_feature) %>%
+  mutate(zscore_median = (median_LFC - mean(median_LFC, na.rm = TRUE)) / sd(median_LFC, na.rm = TRUE)) %>%
+  mutate(zscore_mean = (mean_LFC - mean(mean_LFC, na.rm = TRUE)) / sd(mean_LFC, na.rm = TRUE)) %>%
+  mutate(Outcome = ifelse(Outcome == "uninfected", "P", "NP")) 
+
+myPlot <- foo %>%
+  ggplot(., aes(x = Outcome, y = FACS_feature, fill = zscore_mean)) +
+  geom_tile() +
+  scale_fill_gradient(low="white", high= scales::muted("red")) +
+  #viridis::scale_fill_viridis(discrete=FALSE) +
+  theme_minimal(base_family = "sans", base_size = 9) +
+  theme(strip.text = element_text(angle = 90, vjust = 0.5, hjust=0),
+        axis.title = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        strip.background = element_blank()) +
+  scale_y_discrete(limits=rev) +
+  facet_wrap(~Dosegroup, ncol = 4)
+myPlot
+
+# cairo_pdf(paste0(figdir,"Fig SX LFC Flow Data Heatmap zscore_mean 05132021.pdf"),  height = 5.75, width = 4.75)
+# print(addSmallLegend(myPlot))
+# dev.off()
+```
+### FACS correlation with TTE 6 mos Volcano Plot
+
+Fig 3a: Volcano plot of CSP-specific IgG and flow cytometry features at each timepoint or calculated as fold-change post-vaccination over baseline. 
+
+
+```{r, simple correlations of each cellular data with TTE, echo=FALSE, fig.width=6, fig.height=5}
+library(ggpubr)
+followuptime <- 6
+myCorMeth <- "pearson"
+features_keep <- c("CD19+ of live PBMCs", "atypical memory of B cells", "memory of B cells", "naive of B cells", "PBs of B cells", "immature of B cells",
+                        "CSP-spec of B cells", "CSP-spec of memory B cells", "IgG+ of memory", "IgM+ of memory",
+                        "CD14+ of live PBMCs", "CD14+CD16+ of live monocytes", "CD14+CD16- of live monocytes", "CD14-CD16+ of live monocytes", "CD11c+ of live monocytes",
+                        "CD3+CD4+ of live PBMCs", "CD3+CD8+ of live PBMCs",
+                        "CD56+CD16+ of live PBMCs",
+                        "TCRgd", "Vd1 of TCRgd", "Vd2 of TCRgd", "Vg9+Vd2+ of TCRgd", "Vd1/2- of TCRgd",
+                        "PfSPZ-specific CD3+ of live lymphocytes", "PfSPZ-specific CD3+CD8+ of live lymphocytes", "PfSPZ-specific CD3+CD4+ of live lymphocytes",
+                        "PfSPZ-specific TCRgd",
+                        "PfSPZ-specific Vd1 of TCRgd", "PfSPZ-specific Vd2 of TCRgd", "PfSPZ-specific Vg9+Vd2+ of TCRgd",
+                        "PfSPZ-specific Vg9-Vd2+ of TCRgd", "PfSPZ-specific Vd1/2- of TCRgd",
+                        "anti-CSP IgG")
+  
+longdat.tte <- pData(x) %>%
+  dplyr::filter(treat != "Control") %>%
+  dplyr::filter(!is.na(mal.atp.3)) %>%
+  mutate(Outcome = factor(ifelse(.$mal.atp.3 == 1, "infected", "uninfected"), levels = c("infected", "uninfected"))) %>%
+  mutate(treat = factor(treat,levels = c("Placebo", "4.5 x 10^5 PfSPZ", "9.0 x 10^5 PfSPZ", "1.8 x 10^6 PfSPZ"))) %>%
+  dplyr::rename(Dosegroup = treat) %>%
+  dplyr::select(PATID.OG, Timepoint, Dosegroup, Outcome, contains("tte")) %>%
+  full_join(., alldat %>%
+            dplyr::select(c(PATID.OG, starts_with("FACS_"), "anti-CSP IgG")),
+            by = c("PATID.OG")) %>%
+  pivot_longer(., cols = c(starts_with("FACS_"), "anti-CSP IgG"), names_to = "feature", values_to = "value") %>%
+              mutate(feature = gsub("FACS_","", feature)) %>%
+              mutate(feature = gsub("_"," ", feature)) %>%
+  dplyr::filter(feature %in% features_keep) %>%
+  mutate(feature = gsub("PBs", "plasmablasts", feature)) %>%
+  mutate(feature = gsub("specific", "stimulated", feature)) %>%
+  mutate(feature = gsub("CSP-spec", "CSP-specific", feature)) %>%
+  mutate(feature = gsub("Vd", "Vδ", feature)) %>%
+  mutate(feature = gsub("Vg", "Vγ", feature)) %>%
+  mutate(feature = gsub("gd", "γδ", feature)) %>%
+  drop_na(Timepoint) %>%
+  mutate(PATID = gsub("_.*", "", PATID.OG)) %>%
+  dplyr::select(-c(PATID.OG)) %>%
+  pivot_wider(names_from = "Timepoint", values_from = "value") %>%
+  mutate(LFC = log2((Post_Vaccination+1e-06)/(Baseline+1e-06))) %>%
+  mutate(feature = gsub("FACS_", "", feature)) %>%
+  mutate(feature = gsub("_", " ", feature))
+
+# saveRDS(longdat.tte, "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 PhenoData TTE 6 months Long Format.rds")
+summarized_correlations <- longdat.tte %>%
+  group_by(feature) %>%
+  summarise(baseline_pearson_r_tte6mos = stats::cor.test(Baseline, tte.mal.atp.6, method = myCorMeth)$estimate,
+            baseline_pearson_pval_tte6mos = stats::cor.test(Baseline, tte.mal.atp.6, method = myCorMeth)$p.val,
+            postvax_pearson_r_tte6mos = stats::cor.test(Post_Vaccination, tte.mal.atp.6, method = myCorMeth)$estimate,
+            postvax_pearson_pval_tte6mos = stats::cor.test(Post_Vaccination, tte.mal.atp.6, method = myCorMeth)$p.val,
+            LFC_pearson_r_tte6mos = stats::cor.test(LFC, tte.mal.atp.6, method = myCorMeth)$estimate,
+            LFC_pearson_pval_tte6mos = stats::cor.test(LFC, tte.mal.atp.6, method = myCorMeth)$p.val) %>%
+  pivot_longer(cols = 2:ncol(.), names_to = "stat", values_to = "value") %>%
+  mutate(timepoint = gsub("_.*", "", stat)) %>%
+  mutate(stat = sub(".*?_", "", stat)) %>%
+  mutate(stat = sub("_tte6mos", "", stat)) %>%
+  pivot_wider(names_from = stat, values_from = "value") %>%
+  mutate(neglogpval = -log10(pearson_pval)) %>%
+  mutate(is_significant = ifelse(pearson_pval <0.05, "significant", "ns")) %>%
+  mutate(label = ifelse(is_significant=="significant", feature, "")) %>%
+  mutate(timepoint = factor(timepoint, levels = c("baseline", "postvax", "LFC"), labels = c("baseline","2 weeks post-vax","log2 fold-change"))) %>%
+  mutate(color = ifelse(timepoint=="baseline", "blue", "tbd")) %>%
+  mutate(color = ifelse(timepoint=="2 weeks post-vax", "red", color)) %>%
+  mutate(color = ifelse(timepoint=="log2 fold-change", "purple", color)) %>%
+  mutate(color = ifelse(is_significant=="ns", "gray", color)) %>%
+  mutate(timepoint2 = ifelse(is_significant=="ns", "not significant", as.character(timepoint))) %>%
+  mutate(timepoint2 = factor(timepoint2, levels = c("baseline", "2 weeks post-vax", "log2 fold-change","not significant"), labels = c("baseline","2 weeks post-vax","log2 fold-change", "not significant")))
+
+# saveRDS(summarized_correlations, "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 Summarized Correlations Features TTE 6 months.rds")
+
+cols <- c("baseline" = "blue", "2 weeks post-vax" = "red", "log2 fold-change" = "orange")
+cols2 <- c("baseline" = "blue", "2 weeks post-vax" = "red", "log2 fold-change" = "orange", "not significant" = "gray")
+myPlot <- ggplot(summarized_correlations, aes(x = pearson_r, y = neglogpval, fill = timepoint2, color = timepoint, label = label)) +
+  geom_point(shape = 21, alpha = 0.75, size = 2) +
+  ggrepel::geom_text_repel(aes(label=label),hjust=0, vjust=0, color = "black", force_pull = 1, size = 2, segment.size = 0.2) +
+  scale_color_manual(values = cols, aesthetics = "colour") +
+  scale_fill_manual(values = cols2, aesthetics = "fill") +
+  theme_bw(base_family = "Arial", base_size = 10) +
+  geom_hline(yintercept = 1.3, linetype = "dotted", color = "red")+
+  ylab("-log10(p value)") +
+  xlab("Pearson's r") +
+  xlim(c(-0.4,0.4)) +
+  theme(legend.position = "right")
+myPlot
+# cairo_pdf(paste0(figdir,"Fig X FACS CSP vs TTE by variable by timepoint VolcanoPlot ", myCorMeth, " ", followuptime, " mos followup.pdf"), height = 2.75, width = 4.4)
+# print(myPlot)
+# dev.off()
+```
+
+### Correlate Baselinelines with CSP-specific memory B cells
+
+
+```{r prepare cpm data, echo = FALSE}
+x <- readRDS("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 logCPM expression sets for visualization/PfSPZ_cpm_ExpressionSet_244x21815_AllGroups_bothBatches_0_rmBatchFX_06082021_TMT_logTRUE.rds")
+```
+
+```{r correlate baseline genes with CSP-specific, echo = FALSE}
+csp.memoryB.dat <- longdat.tte %>%
+  dplyr::select(PATID, Dosegroup, Outcome, feature, Post_Vaccination) %>%
+  dplyr::filter(feature == "CSP-specific of memory B cells") %>%
+  pivot_wider(names_from = "feature", values_from = "Post_Vaccination")
+  
+cpm.dat <- exprs(x) %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "SAMPLEID") %>%
+  dplyr::filter(grepl("_0", SAMPLEID)) %>%
+  mutate(PATID = gsub("_0", "", SAMPLEID)) %>%
+  dplyr::select(PATID, everything()) %>%
+  dplyr::select(-c(SAMPLEID)) %>%
+  pivot_longer(cols = 2:ncol(.), names_to = "EnsemblID", values_to = "CPM") %>%
+  left_join(., csp.memoryB.dat,
+            by = "PATID") %>%
+  left_join(., fData(x) %>%
+               dplyr::select(EnsemblID, GeneSymbol),
+             by = "EnsemblID")
+
+summarized_cpm_CSPmemB <- cpm.dat %>%
+  #dplyr::filter(Dosegroup == "1.8 x 10^6 PfSPZ") %>%
+  dplyr::filter(!is.na(`CSP-specific of memory B cells`)) %>%
+  group_by(GeneSymbol, EnsemblID) %>%
+  summarise(baselineCPM_pearson_r_CSPMemB = stats::cor.test(CPM, `CSP-specific of memory B cells`, method = myCorMeth)$estimate,
+            baselineCPM_pearson_pval_CSPMemB = stats::cor.test(CPM, `CSP-specific of memory B cells`, method = myCorMeth)$p.val) %>%
+  #mutate(RankMetric = baselineCPM_pearson_r_CSPMemB*-(log10(baselineCPM_pearson_pval_CSPMemB))) %>%
+  mutate(RankMetric = sign(baselineCPM_pearson_r_CSPMemB)*-(log10(baselineCPM_pearson_pval_CSPMemB))) %>%
+  #mutate(RankMetric = baselineCPM_pearson_r_CSPMemB) %>%
+  arrange(desc(RankMetric))
+```
+
+### Apply GSEA
+
+Note the options. Prior to 2/26/21, I used an unadjusted P value cut off of 0.20 for the genes that are ranked in GSEA. However, I decided to change to ranking by  -log10(p) * logFC as I feel this captures both the effect size and significance. eps is set to 0 here but you can use the default (1e-10) if exact p values are not needed. Note that if choosing "placebo_and_high-dose_PfSPZ" for myGroup, you have to toggle between TopTab1 for P_hidose_v_P_placebo_ and TopTab2 for S_hidose_v_S_placebo_
+
+
+```{r apply fgsea, echo = FALSE, fig.width = 12, fig.heigth = 12}
+library(fgsea)
+library(data.table)
+set.seed(23)
+#https://stephenturner.github.io/deseq-to-fgsea/
+
+res <- summarized_cpm_CSPmemB %>%
+  dplyr::select(GeneSymbol, RankMetric) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric = mean(RankMetric)) %>%
+  arrange(desc(RankMetric)) 
+ranks <- deframe(res)
+ranks[DescTools::AllDuplicated(ranks)]
+head(ranks, 20)
+#ignore warning about ties since there is only one duplicated RankMetric
+# ranks[DescTools::AllDuplicated(ranks)]
+#    AC069547.1 RP11-521C22.3 
+#  0.0001374268  0.0001374268 
+# Load the pathways into a named list
+ranks <- deframe(res)
+
+source("/Volumes/GoogleDrive/My Drive/R scripts/NamedGeneRankList2GseaTable.R")
+bound_df_GSEA <- NamedGeneRankList2GseaTable(rankedgenes = ranks, geneset = "bloodmodules", output_directory = resdir, filename_prefix = "GSEA_baseline_CPM_postvax_CSPmemB_AllGroups", minSize = 20, fixed_seed = TRUE)
+```
+
+## Make plots
+
+Figure 3C
+Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and % CSP-specific of memory B cells at 2-weeks post-vaccination.
+
+```{r arrange data for plots, echo = FALSE}
+library(readxl)
+myfunction <- function(leadingEdge) { length(unlist(strsplit(leadingEdge, ", "))) }
+myFDRcutoff <- 0.05
+# hiBTM_df <- read_excel("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/PfSPZ_R_Results/PfSPZ_GSEA_hiBTMs_baseline_CPM_postvax_CSPmemB.xlsx") %>%
+#   mutate(ModuleType = "high-annotation level BTMs")
+# 
+# loBTM_df <- read_excel("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/PfSPZ_R_Results/PfSPZ_GSEA_loBTMs_baseline_CPM_postvax_CSPmemB.xlsx") %>%
+#   mutate(ModuleType = "low-annotation level BTMs")
+# 
+# MonacoMods_df <- read_excel("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/PfSPZ_R_Results/PfSPZ_GSEA_MonacoMods_baseline_CPM_postvax_CSPmemB.xlsx") %>%
+#   mutate(ModuleType = "Monaco et al.")
+  
+#all_dfs <- bind_rows(hiBTM_df, loBTM_df, MonacoMods_df)
+myModules <- c("lowBTMs", "highBTMs", "MonacoModules", "BloodGen3Module", "MSigDB_Hallmark_v7.4")
+all_dfs <- readxl::read_excel("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/PfSPZ_R_Results/GSEA_baseline_CPM_postvax_CSPmemB GSEA results bloodmodules.xlsx")
+myGSEAClusterPlotDat <- all_dfs %>%
+  filter(padj < myFDRcutoff) %>%
+  filter(module_type %in% myModules) %>%
+  dplyr::mutate(edges = purrr::pmap_dbl(list(leadingEdge), myfunction)) %>%
+  dplyr::mutate(bubblelabel = paste(edges,size, sep = "/")) %>%
+  group_by(module_type) %>%
+    arrange(module_type, desc(NES), padj) %>%
+    dplyr::select(module_type, pathway, edges, size, bubblelabel, NES, padj) %>%
+  ungroup() %>%
+  filter(!grepl("TBA", pathway)) %>%
+  mutate(pathway = gsub("gd", "γδ", pathway)) %>%
+  mutate(pathway = gsub("Vd2", "Vδ2", pathway)) %>%
+  mutate(pathway = gsub("Vg", "Vγ", pathway)) %>%
+  mutate(pathway = gsub("HALLMARK_", "", pathway)) %>%
+  mutate(pathway = gsub("_", " ", pathway)) %>%
+  mutate(neglogpadj = -log10(padj)) %>%
+  arrange(neglogpadj) %>%
+  mutate(pathway = fct_reorder(pathway, NES, .desc=TRUE)) %>%
+  mutate(pathway = fct_reorder(pathway, neglogpadj)) %>%
+  mutate(TextLabelColor = ifelse(module_type == "lowBTMs", scales::muted("red"),
+                                 ifelse(module_type == "highBTMs", scales::muted("blue"),
+                                        ifelse(module_type == "MonacoModules", "black","orange")))) %>%
+  arrange(desc(neglogpadj))
+myColors <- rev(myGSEAClusterPlotDat$TextLabelColor)
+myGSEAClusterPlot <- myGSEAClusterPlotDat %>%
+  ggplot(., aes(x = NES, y = pathway, fill = neglogpadj)) +
+  geom_bar(stat = 'identity') + 
+  viridis::scale_fill_viridis(option= "A", begin = 0.25, end = 0.75, alpha = 0.8, direction = -1, name = "neglogpadj") +
+  theme_classic(base_family = "Arial", base_size = 6) +
+  theme(legend.position = "bottom", axis.text.y = element_text(colour = myColors))
+
+addSmallLegend <- function(myPlot, pointSize = 3, textSize = 2, spaceLegend = 0.3) {
+    myPlot +
+        guides(shape = guide_legend(override.aes = list(size = pointSize)),
+               color = guide_legend(override.aes = list(size = pointSize))) +
+        theme(legend.title = element_text(size = textSize), 
+              legend.text  = element_text(size = textSize),
+              legend.key.size = unit(spaceLegend, "lines"))
+}
+
+cairo_pdf(filename = paste0(figdir, "Figure 3C GSEA_barplot_baseline_CPM_postvax_CSPmemB_FDR", myFDRcutoff*100,"_for_MS_v2.pdf"), height=1.5, width=1.75)
+print(addSmallLegend(myGSEAClusterPlot))
+dev.off()
+```
+
+### Plot CSP-specific of memory B cells vs TTE 6 months
+
+Fig 3b: Scatterplot showing correlation between CSP-specific memory B cells and time-to-first parasitemia up to 6 months (n=183)
+
+```{r  lot CSP-specific of memory B cells vs TTE 6 months, echo = FALSE}
+longdat.tte.CSPmemB <- longdat.tte %>%
+  dplyr::filter(feature == "CSP-specific of memory B cells") %>%
+  dplyr::filter(!is.na(Post_Vaccination)) %>%
+  dplyr::filter(!is.na(tte.mal.atp.6)) 
+CSPmemB_TTE_plot <- ggplot(longdat.tte.CSPmemB, aes(x = tte.mal.atp.6, y = Post_Vaccination)) +
+  geom_point() +
+
+  theme_bw()
+
+myCorMeth <- "pearson"
+CSPmemB_TTE_plot <- ggscatter(longdat.tte.CSPmemB, x = "tte.mal.atp.6", y = "Post_Vaccination",
+            conf.int = TRUE , add = "reg.line", size = 1,
+            cor.coef.size = 1,
+            add.params = list(color = "black", fill = "lightgray", alpha = 0.4),
+            fill = "Outcome", color = "Outcome") +
+  stat_cor(method = myCorMeth) +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  xlab("days to first parasitemia (6 month follow-up)") +
+  ylab("% CSP-specific of memory B cells") +
+  theme_bw(base_family = "Arial", base_size = 6) +
+  theme(legend.position="top") 
+
+cairo_pdf(filename = paste0(figdir, "Corrplot_baseline_TTE_6mos_CSPmemB_for_MS.pdf"), height=2, width=2.5)
+print(CSPmemB_TTE_plot)
+dev.off()
+```

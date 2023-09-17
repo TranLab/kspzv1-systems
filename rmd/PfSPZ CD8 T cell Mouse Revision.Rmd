@@ -1,0 +1,69 @@
+---
+title: "PfSPZ CD8 T cell Mouse Revision"
+author: "Tuan M. Tran"
+date: "4/13/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+```
+
+## Read-in data
+
+```{r readin data, echo = TRUE}
+cd8_dat <- readxl::read_excel("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Elizabeth Leetah Mouse Experiments/Revision PySPZ CD8 T cell Long Format.xlsx")
+```
+
+## Wrangle data
+
+```{r data wrangle, echo=TRUE}
+cd8_dat_d0_d7 <- cd8_dat %>%
+  filter(Day == 0) %>% #filter day 0
+  #filter(Parasitemic_D7 != "yes") %>% #filter mice with parasitemia at Day 7
+  rename(d0_CD8 = CD8) %>%
+  select(-c(Day, Parasitemic_D7)) %>%
+  left_join(., cd8_dat %>%  #join day 0 to day 7 after filtering
+              filter(Day == 7) %>% #filter day 7
+              #filter(Parasitemic_D7 != "yes") %>% #filter mice with parasitemia at Day 7
+              select(Mouse, CD8) %>%
+              rename(d7_CD8 = CD8),
+            by = "Mouse") %>% 
+  mutate(FC = d7_CD8/d0_CD8) %>% #create fold change
+  pivot_longer(., cols = d0_CD8:FC, names_to = "day_FC", values_to = "value") %>%
+  mutate(Treatment = factor(Treatment, levels = c("Saline","LPS","Poly(I:C)", "Flagellin", "β glucan")))
+```
+
+## Plot
+
+```{r plot, echo = TRUE, fig.align='center', fig.width=6, fig.height=4.5}
+library(ggpubr)
+mydat <- cd8_dat_d0_d7 %>%
+  filter(day_FC == "FC")
+
+myPlot <- ggdotplot(mydat, x = "Treatment", y = "value",
+          fill = "Treatment", palette = "jco", size = 1.25)+
+  facet_wrap(~PySPZ_dose, ncol = 2) +
+  geom_hline(yintercept = 1, linetype = 3, color = "grey") +
+  stat_compare_means(method = "anova", label.y = 18.5, vjust = 10)+      # Add global p-value
+  stat_compare_means(label = "p.signif", method = "t.test",
+                     ref.group = "Saline", hide.ns = TRUE, paired = FALSE) +
+  scale_fill_manual(values = c("cyan","red", "purple", "orange", "yellow")) +
+  ylab("change in %CD11ahi of CD8 (day 7/day 0)") +
+  ylim(0,15) +
+  theme_classic() +
+  #scale_shape_manual(values = c("21", "22", "22", "22", "22")) +
+  scale_y_continuous(breaks = seq(0, 15, len = 4)) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        strip.background = element_blank())
+myPlot
+```
+
+```{r plot to PDF, echo=FALSE, eval=FALSE}
+cairo_pdf("/Volumes/GoogleDrive/My Drive/Manuscripts/KSPZV1 Manuscript/Med Revised Submission 2022/Figures/Fig7X CD8 T cells d7 FC baseline both doses.pdf", height = 3.5, width = 6)
+myPlot
+dev.off()
+```
+

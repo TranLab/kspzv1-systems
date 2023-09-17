@@ -1,0 +1,143 @@
+---
+title: "PfSPZ DGE on VRC 312 & VRC 314 Datasets"
+author: "Tuan M. Tran"
+date: "07/15/2023"
+output: html_document
+---
+
+## Objective
+
+Ingenuity Pathways analysis
+
+Differential gene expression results (gene symbols), LFCs, p values, and FDRs) for both VRC 312 and VRC 314 from edgeR were uploaded to IPA, [version June 2023](https://qiagen.my.salesforce.com/sfc/p/#D0000000rgRO/a/6N0000011GyP/jtsB8kUOfFIGWdEtHSS1mcfhQJv3IKapaOKaE0rTzz4). Core analysis was run on genes with unadjusted p<0.2. Here, the upstream regulator analysis is reported.
+
+```{r load libraries, echo = TRUE, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(googledrive)
+library(ggplot2)
+```
+
+```{r define paths}
+datadir_312 <- "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/PfSPZ VRC RNA-seq/VRC 312/"
+datadir_314 <- "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/PfSPZ VRC RNA-seq/VRC 314/"
+figdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/"
+COMPARISON <- "P_vs_S_baseline"
+datadir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Prelim Results JCI resubmission/"
+```
+
+```{r read in IPA data googleddrive, eval=TRUE, message=FALSE}
+#local paths
+# IPA_VRC312 <- readxl::read_xls("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/VRC 312 314 Analysis/PfSPZ_PvS_VRC312_IPA_Revised_07162023.xls", skip = 1) %>%
+#   mutate(study = "VRC 312")
+# 
+# IPA_VRC314 <- readxl::read_xls("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/VRC 312 314 Analysis/PfSPZ_PvS_VRC314_IPA_Revised_07162023.xls", skip = 1) %>%
+#   mutate(study = "VRC 314")
+
+temp <- tempfile(fileext = ".xls")
+dl <- drive_download(
+  as_id("1N94q0Cur7qkt0PZMtX6EcDVOmMt5j-Lq"), path = temp, overwrite = TRUE)
+IPA_VRC312 <- readxl::read_xls(path = dl$local_path, skip = 1) %>%
+  mutate(study = "VRC 312")
+
+temp <- tempfile(fileext = ".xls")
+dl <- drive_download(
+  as_id("1NAgjSINLHusxmrG8Q5MjbU-sV5AF8qMN"), path = temp, overwrite = TRUE)
+IPA_VRC314 <- readxl::read_xls(path = dl$local_path, skip = 1) %>%
+  mutate(study = "VRC 314")
+
+UpRegPvS <- bind_rows(IPA_VRC312, IPA_VRC314) %>%
+  dplyr::select(study, everything())
+```
+
+### Filter, clean, prepare data, and plot
+
+Baseline Upstream Regulator Volcano Plot Fig 2E Revised
+
+```{r upreg Baseline Keep MalVax1, echo=TRUE, fig.height=16, fig.width=16, warning=FALSE, message=FALSE}
+significance.cutoff <- 0.10
+zscore.cutoff <- 2
+MoleculeTypes <- c("cytokine", "transcription regulator", "G-protein coupled receptor", "chemical - endogenous non-mammalian", "chemical - endogenous mammalian",
+                  "group", "chemical toxicant", "microRNA", "enzyme", "translation regulator")
+# MoleculeTypes <- c("cytokine", "transcription regulator", "G-protein coupled receptor", "chemical - endogenous non-mammalian", "chemical drug", "chemical - endogenous mammalian",
+#                   "complex", "group", "chemical toxicant", "microRNA", "enzyme", "translation regulator")
+# UpRegPvS_foo <- UpRegPvS %>%
+#   filter(`p-value of overlap`<0.05) %>%
+#   filter(Comparison == "Baseline Placebo")
+UpRegPvS_foo <- UpRegPvS %>%
+  mutate(study = factor(study, levels = c("VRC 312", "VRC 314"))) %>%
+  dplyr::select(study, "Upstream Regulator", "Molecule Type", "Activation z-score", "p-value of overlap", "B-H corrected p-value") %>%
+  dplyr::rename(MoleculeType = "Molecule Type") %>%
+  mutate(`-log10(p-value of overlap)` = -log10(`p-value of overlap`)) %>%
+  mutate(`-log10(B-H adj. p value)` = -log10(`B-H corrected p-value`)) %>%
+  mutate(`Upstream Regulator` = gsub("\\(and other miRNAs.*", "", `Upstream Regulator`)) %>%
+  mutate(significant = ifelse(`B-H corrected p-value` < significance.cutoff & `Activation z-score` >= 2 |
+                                `B-H corrected p-value`< significance.cutoff & `Activation z-score` <= -2, TRUE, FALSE)) %>%
+  mutate(color = ifelse(significant == TRUE & `Activation z-score`>0, "red", "grey50")) %>%
+  mutate(color = ifelse(significant == TRUE & `Activation z-score` < 0, "blue", color)) %>%
+  mutate(label = ifelse(significant == TRUE, `Upstream Regulator`, ""))  %>%
+  filter(MoleculeType %in% MoleculeTypes) %>%
+  mutate(label = gsub("Salmonella enterica serotype abortus equi lipopolysaccharide", "Salmonella enterica LPS", label)) %>%
+  mutate(label = gsub("salmonella minnesota R595 lipopolysaccharides", "Salmonella R595 LPS", label)) %>% #replacing long names with shorter names/synonyms
+  mutate(label = gsub("tetradecanoylphorbol acetate", "PMA", label)) %>% #replacing long names with shorter names/synonyms
+  mutate(label = gsub("sphingosine-1-phosphate", "S1P", label)) %>% #replacing long names with shorter names/synonyms
+  mutate(label = gsub("beta-estradiol", "β-estradiol", label)) %>% #replacing long names with shorter names/synonyms
+  mutate(label = gsub("Interferon alpha", "IFNα", label)) %>% #replacing long names with shorter names/synonyms
+  mutate(label = gsub("IL1B", "IL1", label)) %>% #replacing long names with shorter names/synonyms
+  mutate(label = gsub("IL1", "IL1β", label)) %>% #replacing long names with shorter names/synonyms
+  mutate(label = gsub("IFN Beta", "IFNβ", label)) %>% #replacing long names with shorter names/synonyms
+  mutate(label = gsub("Ifnar", "IFNAR", label)) %>% #replacing long names with shorter names/synonyms
+  mutate(label = gsub("Tgf beta", "TGFβ", label)) %>% #replacing long names with shorter names/synonyms
+  mutate(label = gsub("G protein alphai", "Giα protein", label)) %>% #replacing long names with shorter names/synonyms
+  mutate(label = gsub("Nfat \\(family\\)", "NFAT", label)) %>% #replacing long names with shorter names/synonyms
+  mutate(label = gsub("Alpha ", "α-", label)) %>% #replacing long names with shorter names/synonyms
+ # mutate(label = gsub("LPSs", "LPS", label)) %>% #replacing long names with shorter names/synonyms
+  mutate(label = gsub("lipopolysaccharide", "LPS", label)) %>% #replacing long names with shorter names/synonyms
+  mutate(label = gsub("medroxyprogesterone acetate", "MPA", label))
+
+#identify upstream regulators that appear as significant in more than one comparison
+foo <- UpRegPvS_foo %>%
+  dplyr::filter(significant == TRUE) %>%
+  group_by(label) %>%
+  summarize(n = n()) %>%
+  dplyr::filter(n > 1)
+
+
+#https://datavizpyr.com/how-to-add-labels-to-select-points-with-ggrepel/
+UpRegPvS_label_df <-  UpRegPvS_foo %>%
+  dplyr::filter(label %in% foo$label | #limit labels due to space limitations
+                  (`Activation z-score` < -2 & `B-H corrected p-value` < 0.00001 & study == "VRC 312")|
+                  (`Activation z-score` > 2 & `B-H corrected p-value` < 0.00001 & study == "VRC 312")|
+                  (`Activation z-score` < -2 & `B-H corrected p-value` < significance.cutoff & study == "VRC 314")|
+                  (`Activation z-score` > 2 & `B-H corrected p-value` < significance.cutoff & study == "VRC 314")) #limit label to upstream regulators that appear as significant in more than one comparison  
+
+myUpRegPlot <- UpRegPvS_foo %>%
+  ggplot(., aes(x = `Activation z-score`, y = `-log10(B-H adj. p value)`, label = label)) + 
+  geom_point(color = as.character(UpRegPvS_foo$color), alpha = 0.6) +
+  geom_hline(yintercept = -log10(significance.cutoff), color = "blue", linetype = "dotted") +
+  geom_vline(xintercept = c((-1*zscore.cutoff), zscore.cutoff), color = "red", linetype = "dotted") +
+  ggrepel::geom_label_repel(data = UpRegPvS_label_df, force = 15, force_pull = 2, size = 3.6, max.overlaps = 20,
+                            label.size = NA,
+                            label.padding = 0.02,
+                            box.padding = 0.02,
+                            fill = alpha(c("white"),0.8)) +
+  theme_bw() +
+  xlab("activation z-score at pre-immunization baseline") +
+  xlim(-6,6)+
+  facet_wrap(~study, nrow = 2, ncol = 2) +
+  theme(axis.text=element_text(size=16),
+        axis.title=element_text(size=16),
+        strip.text = element_text(size=16),
+        strip.background = element_blank())
+```
+
+```{r plot IPA wrap, fig.align='center', fig.height=5, fig.width=10, warning=FALSE}
+myUpRegPlot
+```
+
+```{r print to pdf, eval=FALSE, echo=FALSE}
+cairo_pdf(paste0(figdir, "Fig 2E IPA UpReg 4 doses 1x4 revised logCSP SEX ", Sys.Date(),".pdf"), height = 6.5, width = 26)
+myUpRegPlot
+dev.off()
+```
+
+

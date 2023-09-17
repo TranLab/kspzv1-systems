@@ -1,0 +1,952 @@
+---
+title: "PfSPZ integrated CD14+ monocyte, low annotation BTM, treatment, and CSP IgG analyses to assess effect of interactons on protection outcome"
+author: "Tuan M. Tran"
+date: "9/15/2023"
+output: html_document
+---
+
+## Objective
+
+Integrative analyses to assess the effect of baseline monocyte FACS, CSP IgG, and low annotation BTM expression on protection outcome by treatment (placebo or 1.8x10^6 PfSPZ). Model interactions.
+
+### Load libraries
+
+```{r setup, message=FALSE}
+library(tidyverse)
+library(Biobase)
+library(ggpubr)
+library(pheatmap)
+library(gtsummary)
+library(flextable)
+library(officer)
+library(reshape2)
+library(googledrive)
+library(devtools)
+source_url("https://raw.githubusercontent.com/TranLab/ModuleLists/main/Gene2ModuleExpressionScores.R")
+```
+
+```{r set local paths, echo = FALSE, eval=FALSE}
+figdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Working Figures/"
+datadir <- "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/"
+```
+
+```{r read in local data and arrange, echo = FALSE, eval=FALSE}
+alldat <- readRDS("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/PfSPZ_FACS_PlasmaCytokine_MonocyteActivation_05012021.Rds")
+baseline_eset <- readRDS("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 logCPM expression sets for visualization/PfSPZ_cpm_ExpressionSet_244x21815_AllGroups_bothBatches_0_rmBatchFX_06082021_TMT_logTRUE.rds")
+
+myDat <- pData(baseline_eset) %>%
+  dplyr::select(1:9, mal.vax.1) %>%
+  left_join(., alldat %>%
+              dplyr::rename(SAMPLEID = "PATID.OG") %>%
+              dplyr::select(SAMPLEID, contains("ICS"), contains("CD14"), contains("CD11"),contains("ICS"), contains("CSP IgG"), contains("Cytokine"))
+            , by = "SAMPLEID")
+```
+
+```{r downselect variables for heatmap, echo=FALSE, eval=FALSE, include=FALSE}
+#Downselect variables of interest
+myDat2 <- myDat %>%
+  dplyr::select(SAMPLEID, treat, mal.atp.3, mal.vax.1,
+                `FACS_CD14+CD16-_of_live_monocytes`,
+                `FACS_CD14+CD16+_of_live_monocytes`,
+                `anti-CSP IgG`,
+                `ICS_IL-1ß_MFI_live_monocytes`,
+                `ICS_IL-8_MFI_live_monocytes`,
+                `CytokineObsConc_IFN-alpha`,
+                `CytokineObsConc_CXCL10_IP-10`,
+                `CytokineObsConc_IL-10`
+                ) %>%
+  dplyr::filter(treat == "1.8 x 10^6 PfSPZ" | treat == "Placebo") %>%
+  mutate(mal.atp.3 = ifelse(mal.atp.3==1, "not protected", "protected")) %>%
+  dplyr::rename(Outcome = "mal.atp.3") %>%
+  mutate(mal.vax.1 = ifelse(mal.vax.1==1, "yes", "no")) %>%
+  dplyr::rename('Parasitemic at first vax' = "mal.vax.1") %>%
+  column_to_rownames(var = "SAMPLEID") %>%
+  drop_na()
+
+myDat2$`anti-CSP IgG` <- log10(myDat2$`anti-CSP IgG`+1)
+myDat2$`CytokineObsConc_IFN-alpha`<- log10(myDat2$`CytokineObsConc_IFN-alpha`+1)
+myDat2$`CytokineObsConc_CXCL10_IP-10`<- log10(myDat2$`CytokineObsConc_CXCL10_IP-10`+1)
+myDat2$`CytokineObsConc_IL-10`<- log10(myDat2$`CytokineObsConc_IL-10`+1)
+ pDat <- AnnotatedDataFrame(myDat2[,c(1:3)])
+```
+
+```{r make heatmap, echo = FALSE, fig.height = 2, fig.width=10, include=FALSE, eval=FALSE}
+### Make heatmap
+myDat2_eset <- ExpressionSet(assayData = t(myDat2[,-c(1:3)]), phenoData = pDat)
+myDat2_eset <- myDat2_eset[,order(myDat2_eset$treat, myDat2_eset$Outcome, colMeans(exprs(myDat2_eset)))]
+#scale data
+exprs(myDat2_eset) <- t(scale(t(log(exprs(myDat2_eset)+1))))
+annotation <- pData(myDat2_eset)
+paletteLength <- 50
+myColor <- colorRampPalette(c("blue", "white", "red"))(paletteLength)
+# length(breaks) == length(paletteLength) + 1
+# use floor and ceiling to deal with even/odd length pallettelengths
+myBreaks <- c(seq(min(exprs(myDat2_eset)), 0, length.out=ceiling(paletteLength/2) + 1), 
+              seq(max(exprs(myDat2_eset))/paletteLength, max(exprs(myDat2_eset)), length.out=floor(paletteLength/2)))
+
+pheatmap::pheatmap(exprs(myDat2_eset), annotation = annotation, cluster_cols = FALSE, show_colnames = FALSE, color=myColor, breaks=myBreaks)
+```
+
+```{r make boxplots, echo = FALSE, fig.width=10, eval=FALSE, include=FALSE}
+### Make boxplots
+basefont <- "sans"
+basefontsize <- 10
+pvalfontsize <- 8
+mySignifLabel <- "p.signif"
+symnum.args <- list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1), symbols = c("****", "***", "**", "*", "trend","ns"))
+
+ myDat %>%
+  dplyr::select(SAMPLEID, treat, mal.atp.3, mal.vax.1,
+                `FACS_CD14+CD16-_of_live_monocytes`,
+                `FACS_CD14+CD16+_of_live_monocytes`,
+                `anti-CSP IgG`,
+                ICS_TNF_pct_of_live_monocytes,
+                `ICS_IL-8_MFI_live_monocytes`,
+                contains("Cytokine"),
+                contains("ICS")
+                ) %>%
+  dplyr::filter(treat == "1.8 x 10^6 PfSPZ" | treat == "Placebo") %>%
+  mutate(mal.atp.3 = ifelse(mal.atp.3==1, "not protected", "protected")) %>%
+  dplyr::rename(Outcome = "mal.atp.3") %>%
+  mutate(mal.vax.1 = ifelse(mal.vax.1==1, "yes", "no")) %>%
+  dplyr::rename('Parasitemic at first vax' = "mal.vax.1") %>%
+  column_to_rownames(var = "SAMPLEID") %>%
+  #drop_na() %>%
+  pivot_longer(., cols = c(4:ncol(.)), names_to = "variable", values_to = "values") %>%
+    ggplot(., aes(x = treat, y = values, fill = Outcome, color = Outcome)) +
+    geom_point(position = position_jitterdodge()) +
+    geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA) +
+    ggpubr::stat_compare_means(aes(group = Outcome), label = "p.signif", method = "wilcox.test", label.x.npc = "center", vjust = 1, symnum.args = symnum.args) +
+    scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+    scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+    theme_classic(base_family = basefont, base_size = basefontsize) +
+    theme(#axis.text.x=element_blank(),
+          #axis.text.y=element_blank(),
+          axis.ticks.x=element_blank(),
+          axis.title.x=element_blank(),
+          strip.background = element_blank(),
+          legend.position="top"
+          ) +
+  facet_wrap(~variable, scale = "free_y")
+```
+
+```{r make CD14 , echo = FALSE, eval=FALSE, fig.width=6, message=FALSE}
+basefont <- "sans"
+basefontsize <- 10
+pvalfontsize <- 8
+mySignifLabel <- "p.signif"
+symnum.args <- list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1), symbols = c("****", "***", "**", "*", "trend","ns"))
+
+ myPlot <- myDat %>%
+   dplyr::select(SAMPLEID, treat, mal.atp.3, mal.vax.1,
+                 `FACS_CD14+_of_live_monocytes`,
+                 #`FACS_CD14+CD16-_of_live_monocytes`,
+                 #`FACS_CD14+CD16+_of_live_monocytes`,
+                 #`FACS_CD11c+_of_live_monocytes`,
+                 `anti-CSP IgG`
+                  ) %>%
+   mutate(logCSPIgG = log10(`anti-CSP IgG`+1)) %>%
+   dplyr::filter(logCSPIgG >0) %>%
+   dplyr::select(-c(`anti-CSP IgG`, logCSPIgG)) %>%
+   dplyr::filter(treat == "1.8 x 10^6 PfSPZ" | treat == "Placebo") %>%
+   mutate(mal.atp.3 = ifelse(mal.atp.3==1, "not protected", "protected")) %>%
+   dplyr::rename(Outcome = "mal.atp.3") %>%
+   mutate(mal.vax.1 = ifelse(mal.vax.1==1, "yes", "no")) %>%
+   dplyr::rename('Parasitemic at first vax' = "mal.vax.1") %>%
+   column_to_rownames(var = "SAMPLEID") %>%
+   pivot_longer(., cols = c(4:ncol(.)), names_to = "variable", values_to = "values") %>%
+   mutate(variable = gsub("FACS_", "", variable)) %>%
+   mutate(variable = gsub("live_", "", variable)) %>%
+   mutate(variable = gsub("_", " ", variable)) %>%
+   mutate(variable = gsub("monocytes", "monocyte gate", variable)) %>%
+   ggplot(., aes(x = treat, y = values, fill = Outcome, color = Outcome)) +
+   geom_point(position = position_jitterdodge(), size = 1) +
+   geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA) +
+   ggpubr::stat_compare_means(aes(group = Outcome), label = "p.format", method = "wilcox.test", label.x.npc = "center", vjust = 1, symnum.args = symnum.args, show.legend = FALSE, size = 2.5) +
+   scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+   scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+   ylab("% of parent") +
+   theme_bw(base_family = basefont, base_size = basefontsize) +
+   theme(#axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+          #axis.text.y=element_blank(),
+          axis.ticks.x=element_blank(),
+          axis.title.x=element_blank(),
+          strip.background = element_blank(),
+          legend.position="top"
+          ) +
+  facet_wrap(~variable, scale = "free_y", nrow=1)
+ 
+classicalPlot <- myDat_monocytes_CSPAb %>%
+  #dplyr::filter(treat == "1.8 x 10^6 PfSPZ" | treat == "Placebo") %>%
+  mutate(mal.atp.3 = factor(ifelse(mal.atp.3==1, "not protected", "protected"))) %>%
+  dplyr::rename(Outcome = "mal.atp.3") %>%
+  mutate(mal.vax.1 = ifelse(mal.vax.1==1, "yes", "no")) %>%
+  mutate(logCSPIgG = log10(`anti-CSP IgG`+1)) %>%  
+   dplyr::rename('Parasitemic at first vax' = "mal.vax.1") %>%
+   column_to_rownames(var = "SAMPLEID") %>%
+  drop_na(logCSPIgG, `FACS_CD14+CD16-_of_live_monocytes`, Outcome) %>%
+  ggplot(., aes(x = logCSPIgG, y = `FACS_CD14+CD16-_of_live_monocytes`, color = Outcome)) +
+  geom_point() +
+  stat_smooth(method = `lm`, alpha = 0.2) +
+  #scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  theme_bw(base_family = basefont, base_size = basefontsize) +
+  theme(strip.background = element_blank(),
+        legend.position="top"
+          ) +
+  facet_wrap(~treat, scales = "free_y")
+```
+
+```{r reduce data for plot csp vs cd14 Figure S7B, eval=FALSE, echo=FALSE}
+myDat_monocytes_CSPAb <- pData(baseline_eset) %>%
+  dplyr::select(1:9, mal.vax.1) %>%
+  left_join(., alldat %>%
+              dplyr::rename(SAMPLEID = "PATID.OG") %>%
+              dplyr::select(SAMPLEID, contains("CD14"), contains("CSP IgG"))
+            , by = "SAMPLEID")
+write_rds(myDat_monocytes_CSPAb, paste0(datadir, "CD14_monocytes_CSPIgG_treat_interaction_data.rds"))
+```
+
+### Read-in data
+
+Read-in data using google drive (may require authentication using gmail/google account)
+
+```{r readin and arrange data for plot csp vs cd14 Figure S7B, message=FALSE}
+#from google drive
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1NlFi_kCOrC2Hj2TkYgRMV3PCDELysSCI"), path = temp, overwrite = TRUE)
+myDat_monocytes_CSPAb <- readRDS(file = dl$local_path)
+```
+
+### Arrange data
+
+```{r arrange data for plot csp vs cd14 Figure S7B, message=FALSE, warning=FALSE}
+basefont <- "sans"
+basefontsize <- 10
+pvalfontsize <- 4
+mySignifLabel <- "p.signif"
+symnum.args <- list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, 1), symbols = c("****", "***", "**", "*", "trend","ns"))
+
+
+Mono_v_CSP_plot_nrow2_dat <- myDat_monocytes_CSPAb %>%
+  dplyr::filter(treat == "1.8 x 10^6 PfSPZ" | treat == "Placebo") %>%
+  mutate(mal.atp.3 = factor(ifelse(mal.atp.3==1, "not protected", "protected"))) %>%
+  dplyr::rename(Outcome = "mal.atp.3") %>%
+  mutate(mal.vax.1 = ifelse(mal.vax.1==1, "yes", "no")) %>%
+  mutate(logCSPIgG = log10(`anti-CSP IgG`+1)) %>%  
+   dplyr::rename('Parasitemic at first vax' = "mal.vax.1") %>%
+   column_to_rownames(var = "SAMPLEID") %>%
+  drop_na(logCSPIgG, `FACS_CD14+_of_live_monocytes`)
+
+Mono_v_CSP_plot_nrow2 <- Mono_v_CSP_plot_nrow2_dat %>%
+  ggplot(., aes(x = logCSPIgG, y = `FACS_CD14+_of_live_monocytes`, color = Outcome)) +
+  geom_point(size = 1) +
+  stat_smooth(method = `lm`, alpha = 0.2, weight = 0.25, size = 0.5) +
+  #scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  ylab("% of parent") +
+  xlab("log10(CSP-specific IgG + 1)") +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  theme_bw(base_family = basefont, base_size = basefontsize) +
+  theme(strip.background = element_blank(),
+        legend.position="top"
+          ) +
+  facet_wrap(~treat, nrow = 2, scales = "free_y")
+
+ CSP_pos_by_dose_nrow2_dat <- Mono_v_CSP_plot_nrow2_dat %>%
+   dplyr::filter(logCSPIgG >0) %>%
+   dplyr::filter(treat == "1.8 x 10^6 PfSPZ" | treat == "Placebo")
+ 
+ CSP_pos_by_dose_nrow2_summarized_dat <- CSP_pos_by_dose_nrow2_dat %>%
+   group_by(treat, Outcome) %>%
+   summarize(n= n()) %>%
+   mutate(n_label = paste0("n = ",n,""))
+ 
+ CSP_pos_by_dose_nrow2_dat <- CSP_pos_by_dose_nrow2_dat %>%
+   left_join(., CSP_pos_by_dose_nrow2_summarized_dat,
+             by = c("treat", "Outcome")) %>%
+   mutate(Outcome = ifelse(Outcome == "protected", "P", "NP")) %>%
+   mutate(outcome_n = paste0(Outcome, " (", n, ")"))
+ 
+ CSP_pos_by_dose_plot_nrow2 <- CSP_pos_by_dose_nrow2_dat %>%
+   ggplot(., aes(x = Outcome, y = `FACS_CD14+_of_live_monocytes`, fill = Outcome, color = Outcome)) +
+   geom_point(position = position_jitterdodge(), size = 1) +
+   geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA) +
+   ggpubr::stat_compare_means(aes(group = Outcome),
+                              label = "p.format", method = "wilcox.test",
+                              label.x.npc = "center", vjust = 1,
+                              symnum.args = symnum.args, show.legend = FALSE, size = pvalfontsize) +
+   scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+   scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+   ylab("% of parent") +
+   theme_bw(base_family = basefont, base_size = basefontsize) +
+   theme(#axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+          #axis.text.y=element_blank(),
+          axis.ticks.x=element_blank(),
+          axis.title.x=element_blank(),
+          strip.background = element_blank(),
+          legend.position="top"
+          ) + 
+  geom_text(aes(label=n_label, y = 0.3), color = "black",size=3,vjust=-0.5, check_overlap = TRUE) +
+  facet_wrap(~treat, scale = "free_y", nrow=2) 
+ 
+combinedPlot <- ggarrange(Mono_v_CSP_plot_nrow2, CSP_pos_by_dose_plot_nrow2, ncol = 2, common.legend = TRUE)
+```
+
+### Plot relationship between CSP IgG and monocytes (Figure S7B)
+
+```{r plot csp vs cd14 Figure S7B, fig.align='center', fig.width=8, fig.height=6, echo=FALSE}
+combinedPlot
+```
+
+```{r save combined plot Figure 7A,  eval=FALSE, include=FALSE, echo=FALSE}
+ggsave(combinedPlot, file = paste0(figdir, "Fig 7A CD14 vs CSP IgG Interaction and P vs NP BoxPlot 2x2.pdf"), device = cairo_pdf, units = "in", height = 4, width = 4.5)
+```
+
+Perform correlations between % CD14+ monocytes vs CSP-specific IgG stratified by teratment and outcome (per reviewer request). Shown are coefficients and p values for Pearson's correlations.
+
+```{r perform spearman correlations on Figure 7A per reviewer request, include=FALSE}
+Mono_v_CSP_plot_nrow2_dat %>%
+  filter(treat == "1.8 x 10^6 PfSPZ" | treat == "Placebo") %>%
+  droplevels() %>%
+  drop_na(`FACS_CD14+CD16-_of_live_monocytes`) %>%
+  group_by(treat, Outcome) %>%
+  dplyr::summarize(r = cor.test(`FACS_CD14+CD16-_of_live_monocytes`,logCSPIgG, method = "spearman")[["estimate"]],
+                   p_val = cor.test(`FACS_CD14+CD16-_of_live_monocytes`,logCSPIgG, method = "spearman")[["p.value"]]) %>%
+  knitr::kable()
+```
+
+```{r perform pearson correlations on Figure 7A per reviewer request, message=FALSE}
+Mono_v_CSP_plot_nrow2_dat %>%
+  filter(treat == "1.8 x 10^6 PfSPZ" | treat == "Placebo") %>%
+  droplevels() %>%
+  drop_na(`FACS_CD14+CD16-_of_live_monocytes`) %>%
+  group_by(treat, Outcome) %>%
+  dplyr::summarize(r = cor.test(`FACS_CD14+CD16-_of_live_monocytes`,logCSPIgG, method = "pearson")[["estimate"]],
+                   p_val = cor.test(`FACS_CD14+CD16-_of_live_monocytes`,logCSPIgG, method = "pearson")[["p.value"]]) %>%
+  knitr::kable()
+```
+
+### Logistic regression to assess three-way interaction
+
+Build model and plot results as flextable
+
+```{r perform logistic regression model with three way interaction table S7}
+logit_res_all <- glm(Outcome~logCSPIgG*`FACS_CD14+CD16-_of_live_monocytes`*treat, data = Mono_v_CSP_plot_nrow2_dat, family="binomial")
+#summary(logit_res_all)
+
+sect_properties <- prop_section(
+  page_size = page_size(
+    orient = "portrait",
+    width = 8, height = 10
+  ),
+  type = "continuous",
+  page_margins = page_mar()
+)
+
+my_flex_tab <- tbl_regression(logit_res_all, exponentiate = FALSE) %>%
+  add_n() %>%
+  as_flex_table()
+
+my_flex_tab
+```
+
+```{r save logit table results as flex table docx Table s7, include=FALSE, eval=FALSE, echo=FALSE}
+#save as docx using flextable
+my_flex_tab %>%
+  flextable::save_as_docx(path = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Supplementary Tables JCI resubmission/Figure 7A Logit Table with interaction.docx",
+                          pr_section = sect_properties)
+
+```
+
+Examine and visualize three way interaction using perspective plot.
+
+```{r comments isualize three way interaction , include=FALSE, echo=FALSE, eval=FALSE}
+#https://stats.stackexchange.com/questions/47265/how-to-investigate-a-3-way-interaction
+#https://stackoverflow.com/questions/51414756/creating-surface-3d-plot-of-3-numeric-variables-in-r
+```
+
+```{r visualize three way interaction revised Figure 7A, fig.align='center', fig.width=8, fig.height=4}
+anova(update(logit_res_all,.~.-treat:logCSPIgG:`FACS_CD14+CD16-_of_live_monocytes`),logit_res_all)
+new_placebo_dat <- data.frame("FACS_CD14+CD16-_of_live_monocytes" = rep(seq(0, 0.50, by =0.025),10),
+                              logCSPIgG = rep(seq(0,5, by = 0.55),21), check.names = FALSE,
+                              treat = rep("Placebo", 210)) %>%
+  arrange("FACS_CD14+CD16-_of_live_monocytes", logCSPIgG)
+new_placebo_dat$pred <- predict(logit_res_all,newdata=new_placebo_dat)
+new_placebo_fit <- new_placebo_dat %>%
+  dplyr::rename(monocytes = `FACS_CD14+CD16-_of_live_monocytes`) %>%
+  dplyr::select(pred, monocytes, logCSPIgG) %>%
+  arrange(monocytes, logCSPIgG)
+
+plot_matrix_placebo <- t(acast(new_placebo_fit, monocytes~logCSPIgG, value.var= "pred"))
+
+
+new_highdose_dat <- data.frame("FACS_CD14+CD16-_of_live_monocytes" = rep(seq(0, 0.50, by =0.025),10),
+                              logCSPIgG = rep(seq(0,5, by = 0.55),21), check.names = FALSE,
+                              treat = rep("1.8 x 10^6 PfSPZ", 210)) %>%
+  arrange("FACS_CD14+CD16-_of_live_monocytes", logCSPIgG)
+new_highdose_dat$pred <- predict(logit_res_all,newdata=new_highdose_dat)
+new_highdose_fit <- new_highdose_dat %>%
+  dplyr::rename(monocytes = `FACS_CD14+CD16-_of_live_monocytes`) %>%
+  dplyr::select(pred, monocytes, logCSPIgG) %>%
+  arrange(monocytes, logCSPIgG)
+
+plot_matrix_hd <- t(acast(new_highdose_fit, monocytes~logCSPIgG, value.var= "pred"))
+
+par(mfrow=c(1,2),mai=c(0,0.1,0.2,0)+.02)
+
+my_theta <- 305#310
+my_phi <- 20 #20
+
+#placebo
+persp(x = as.numeric(rownames(plot_matrix_placebo)), 
+  y = as.numeric(colnames(plot_matrix_placebo)), 
+  z = plot_matrix_placebo,
+  xlab = "CSP-specific IgG",
+  ylab = "monocytes",
+  zlab = "protection",
+  zlim = c(-15,40),
+  main = "Placebo",
+  #ticktype ='detailed',
+  theta = my_theta, 
+  phi = 20,
+  col = "gray", shade = 0.5)
+
+#1.8x10^6 PfSPZ
+persp(x = as.numeric(rownames(plot_matrix_hd)), 
+  y = as.numeric(colnames(plot_matrix_hd)), 
+  z = plot_matrix_hd,
+  xlab = "CSP-specific IgG",
+  ylab = "monocytes",
+  zlab = "protection",
+  zlim = c(-15,40),
+  main = "1.8x10^6 PfSPZ",
+  #ticktype ='detailed',
+  theta = my_theta, 
+  phi = my_phi,
+  col = "red", shade = 0.5)
+```
+
+```{r save perspective plots showing three way interaction revised Figure 7A, include=FALSE, echo=FALSE, eval=FALSE}
+cairo_pdf(filename = paste0(figdir, "3d fit monocyte vs csp igg placebo theta ", my_theta, " phi ", my_phi, ".pdf"), height = 6, width = 6)
+persp(x = as.numeric(rownames(plot_matrix_placebo)), 
+  y = as.numeric(colnames(plot_matrix_placebo)), 
+  z = plot_matrix,
+  xlab = "CSP-specific IgG",
+  ylab = "monocytes",
+  zlab = "protection",
+  zlim = c(-15,40),
+  main = "Placebo",
+  #ticktype ='detailed',
+  theta = my_theta, 
+  phi = 20,
+  col = "gray", shade = 0.5)
+dev.off()
+
+cairo_pdf(filename = paste0(figdir, "3d fit monocyte vs csp igg high dose pfspz theta ", my_theta, " phi ", my_phi, ".pdf"), height = 6, width = 6)
+persp(x = as.numeric(rownames(plot_matrix_hd)), 
+  y = as.numeric(colnames(plot_matrix_hd)), 
+  z = plot_matrix_hd,
+  xlab = "CSP-specific IgG",
+  ylab = "monocytes",
+  zlab = "protection",
+  zlim = c(-15,40),
+  main = "1.8x10^6 PfSPZ",
+  #ticktype ='detailed',
+  theta = my_theta, 
+  phi = my_phi,
+  col = "red", shade = 0.5)
+dev.off()
+```
+
+### Read-in module expression data
+
+```{r read local data, eval=FALSE, echo=FALSE}
+baseline_eset <- readRDS("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 logCPM expression sets for visualization/PfSPZ_cpm_ExpressionSet_244x21815_AllGroups_bothBatches_0_rmBatchFX_06082021_TMT_logTRUE.rds")
+```
+
+```{r read googdrive expression data, message=FALSE}
+#from google drive
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1togaBlNIxiDj16FyXTC-r7Qw0A9cG2az"), path = temp, overwrite = TRUE)
+baseline_eset <- readRDS(file = dl$local_path)
+```
+
+```{r arrange module expresssion data}
+MES_eset <- baseline_eset
+MES_mat <- Gene2ModuleExpressionScores(MES_eset, module_list = "lowBTMs", summary_stat = median)
+myMESdat <- MES_mat %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "SAMPLEID") %>%
+  #dplyr::select(c(SAMPLEID, `INFLAMMATORY/TLR/CHEMOKINES`)) %>%
+  right_join(., myDat_monocytes_CSPAb,
+             by="SAMPLEID") %>%
+  dplyr::filter(treat == "1.8 x 10^6 PfSPZ" | treat == "Placebo") %>%
+  mutate(mal.atp.3 = ifelse(mal.atp.3==1, "not protected", "protected")) %>%
+  dplyr::rename(Outcome = "mal.atp.3") %>%
+  mutate(mal.vax.1 = ifelse(mal.vax.1==1, "yes", "no")) %>%
+  mutate(logCSPIgG = log10(`anti-CSP IgG`+1)) %>%
+  mutate(CSPIgG_cat = factor(ifelse(logCSPIgG>0, "CSP-specific IgG (+)", "CSP-specific IgG (-)"),
+         levels = c("CSP-specific IgG (-)", "CSP-specific IgG (+)"))) %>%
+  dplyr::rename('Parasitemic at first vax' = "mal.vax.1") %>%
+  column_to_rownames(var = "SAMPLEID")
+```
+
+```{r plot myMESdat, echo = FALSE, include = FALSE, eval = FALSE, fig.height=3, fig.width=6}
+
+myMESdat %>%
+  ggplot(., aes(x = logCSPIgG, y = `MHC-TLR7-TLR8 cluster (M146)`, color = Outcome)) +
+  geom_point(size = 1) +
+  stat_smooth(method = `lm`, alpha = 0.2, weight = 0.5) +
+  #scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  theme_bw(base_family = basefont, base_size = basefontsize) +
+  theme(strip.background = element_blank(),
+        legend.position="top"
+          ) +
+  facet_wrap(~treat, nrow = 1)
+```
+
+### Baseline expression of innate BTMs in Protected and Not Protected children *without* CSP-specific IgG at baseline 
+
+Comparisons with significant differences p < 0.05 correspond with plots in Figure 7B of revised manuscript. Plots correspond with results in Table S8 revised manuscript.
+
+```{r lowBTM_noCSPIgG_Outcome, fig.align='center', fig.width=12, fig.height=24}
+basefont <- "sans"
+basefontsize <- 10
+pvalfontsize <- 4
+
+lowBTM_noCSPIgG_Outcome_BoxPlots <- myMESdat %>%
+  dplyr::filter(logCSPIgG == 0) %>%
+  dplyr::select(treat, Outcome, logCSPIgG, CSPIgG_cat, contains("inflamm") | contains("LPS") | contains("TLR") | contains("innate") | contains("NFkB") | contains("antigen") | contains("lysosome") | contains("activat") & contains("dendritic") | contains("activat") & contains("monocyt") | contains("activat") & contains("DC") | contains("activat") & contains("myeloid") | contains("IFN") | contains("interferon") | contains("viral") | contains("complement")) %>%
+  pivot_longer(., cols = c(5:ncol(.)), names_to = "variable", values_to = "values") %>%
+  ggplot(., aes(x = treat, y = values, fill = Outcome, color = Outcome)) +
+  geom_point(position = position_jitterdodge(), size = 0.25) +
+  geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA, weight = 0.5, size = 0.25) +
+  ggpubr::stat_compare_means(aes(group = Outcome),
+                             label = "p.format", method = "wilcox.test", label.x.npc = "center", vjust = 1,
+                             symnum.args = symnum.args, show.legend = FALSE, size = pvalfontsize) +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  ylab("module expression score") +
+  theme_bw(base_family = basefont, base_size = basefontsize) +
+  theme(axis.ticks.x=element_blank(),
+        axis.title.x=element_blank(),
+        strip.background = element_blank(),
+        legend.position="top"
+        ) +
+  facet_wrap(~variable, scales = "free_y", ncol=4,
+             labeller = labeller(variable = label_wrap_gen(width = 25)))
+
+lowBTM_noCSPIgG_Outcome_BoxPlots
+```
+
+```{r save lowBTM_noCSPIgG_Outcome, include=FALSE, echo=FALSE, eval=FALSE}
+ggsave(lowBTM_noCSPIgG_Outcome_BoxPlots, file = paste0(figdir, "Fig SX lowBTM no CSP IgG Outcome BoxPlots.pdf"), device = cairo_pdf, units = "in", height = 9, width = 5)
+```
+
+### Baseline expression of innate BTMs in Protected and Not Protected children *with* CSP-specific IgG at baseline 
+
+Plots correspond with results in Table S8 revised manuscript.
+
+```{r lowBTM_withCSPIgG_Outcome, fig.align='center', fig.width=12, fig.height=24}
+basefont <- "sans"
+basefontsize <- 10
+pvalfontsize <- 4
+
+lowBTM_withCSPIgG_Outcome_BoxPlots <- myMESdat %>%
+  dplyr::filter(logCSPIgG > 0) %>%
+  dplyr::select(treat, Outcome, logCSPIgG, CSPIgG_cat, contains("inflamm") | contains("LPS") | contains("TLR") | contains("innate") | contains("NFkB") | contains("antigen") | contains("lysosome") | contains("activat") & contains("dendritic") | contains("activat") & contains("monocyt") | contains("activat") & contains("DC") | contains("activat") & contains("myeloid") | contains("IFN") | contains("interferon") | contains("viral") | contains("complement")) %>%
+  pivot_longer(., cols = c(5:ncol(.)), names_to = "variable", values_to = "values") %>%
+  ggplot(., aes(x = treat, y = values, fill = Outcome, color = Outcome)) +
+  geom_point(position = position_jitterdodge(), size = 0.25) +
+  geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA, weight = 0.5, size = 0.25) +
+  ggpubr::stat_compare_means(aes(group = Outcome), label = "p.format", method = "wilcox.test", label.x.npc = "center", vjust = 1, symnum.args = symnum.args, show.legend = FALSE, size = pvalfontsize) +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  ylab("module expression score") +
+  theme_bw(base_family = basefont, base_size = basefontsize) +
+  theme(axis.ticks.x=element_blank(),
+        axis.title.x=element_blank(),
+        strip.background = element_blank(),
+        legend.position="top"
+        ) +
+  facet_wrap(~variable, scales = "free_y", ncol=4,
+             labeller = labeller(variable = label_wrap_gen(width = 25)))
+
+lowBTM_withCSPIgG_Outcome_BoxPlots
+```
+
+```{r save lowBTM_withCSPIgG_Outcome, include=FALSE, echo=FALSE, eval=FALSE}
+ggsave(lowBTM_withCSPIgG_Outcome_BoxPlots, file = paste0(figdir, "Fig SX lowBTM WITH CSP IgG Outcome BoxPlots.pdf"), device = cairo_pdf, units = "in", height = 9, width = 5)
+```
+
+```{r lowBTM_splitCSPIgG_Outcome, include=FALSE, echo=FALSE}
+basefont <- "sans"
+basefontsize <- 10
+pvalfontsize <- 4
+
+lowBTM_splitCSPIgG_Outcome_BoxPlots <- myMESdat %>%
+  #dplyr::filter(logCSPIgG > 0) %>%
+  dplyr::select(treat, Outcome, logCSPIgG, CSPIgG_cat, contains("inflamm") | contains("LPS") | contains("TLR") | contains("innate") | contains("NFkB") | contains("antigen") | contains("lysosome") | contains("activat") & contains("dendritic") | contains("activat") & contains("monocyt") | contains("activat") & contains("DC") | contains("activat") & contains("myeloid") | contains("IFN") | contains("interferon") | contains("viral") | contains("complement")) %>%
+  pivot_longer(., cols = c(5:ncol(.)), names_to = "variable", values_to = "values") %>%
+  ggplot(., aes(x = treat, y = values, fill = Outcome, color = Outcome)) +
+  geom_point(position = position_jitterdodge(), size = 0.25) +
+  geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA, weight = 0.5, size = 0.25) +
+  ggpubr::stat_compare_means(aes(group = Outcome), label = "p.format", method = "wilcox.test", label.x.npc = "center", vjust = 1, symnum.args = symnum.args, show.legend = FALSE, size = pvalfontsize) +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  ylab("module expression score") +
+  theme_bw(base_family = basefont, base_size = basefontsize) +
+  theme(#axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        #axis.text.y=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.x=element_blank(),
+        strip.background = element_blank(),
+        legend.position="top"
+        ) +
+  facet_wrap(~variable+CSPIgG_cat, scales = "free_y", nrow=16)
+
+lowBTM_splitCSPIgG_Outcome_BoxPlots_data <- ggplot_build(lowBTM_splitCSPIgG_Outcome_BoxPlots)
+```
+
+```{r save lowBTM SPLIT CSP IgG Outcome, include=FALSE, echo=FALSE, eval=FALSE}
+ggsave(lowBTM_splitCSPIgG_Outcome_BoxPlots, file = paste0(figdir, "Fig SX lowBTM SPLIT CSP IgG Outcome BoxPlots.pdf"), device = cairo_pdf, units = "in", height = 16, width = 5)
+```
+
+```{r lowBTM_CSPIgG, include=FALSE, echo=FALSE, eval=FALSE}
+basefont <- "sans"
+basefontsize <- 10
+pvalfontsize <- 4
+
+lowBTM_CSPIgG_Plot <- myMESdat %>%
+  dplyr::select(treat, Outcome, logCSPIgG, CSPIgG_cat, contains("inflamm") | contains("LPS") | contains("TLR") | contains("innate") | contains("NFkB") | contains("antigen") | contains("lysosome") | contains("activat") & contains("dendritic") | contains("activat") & contains("monocyt") | contains("activat") & contains("DC") | contains("activat") & contains("myeloid") | contains("IFN") | contains("interferon") | contains("viral") | contains("complement")) %>%
+  pivot_longer(., cols = c(5:ncol(.)), names_to = "variable", values_to = "values") %>%
+  ggplot(., aes(x = logCSPIgG, y = values, color = Outcome)) +
+  geom_point(size = 0.25) +
+  stat_smooth(method = `lm`, alpha = 0.2, weight = 0.5, size = 0.25) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  theme_bw(base_family = basefont, base_size = basefontsize) +
+  theme(strip.background = element_blank(),
+        legend.position="top"
+          ) +
+  ylab("module expression score") +
+  facet_wrap(~variable+treat, scales = "free", nrow = 9)
+
+lowBTM_CSPIgG_Plot
+```
+
+```{r save lowBTM vs CSP IgG Interaction plot, include=FALSE, echo=FALSE, eval=FALSE}
+ggsave(lowBTM_CSPIgG_Plot, file = paste0(figdir, "Fig SX lowBTM vs CSP IgG Interaction Plot.pdf"), device = cairo_pdf, units = "in", height = 8, width = 4)
+```
+
+```{r Cytokine_ICS_noCSPIgG_Outcome, include=FALSE, echo=FALSE, eval=FALSE}
+Cytokine_ICS_noCSPIgG_Outcome_BoxPlots <- myMESdat %>%
+  rownames_to_column(var = "SAMPLEID") %>%
+  right_join(., myDat %>%
+               dplyr::select(SAMPLEID, contains("Cytokine"), contains("ICS")),
+             by="SAMPLEID") %>%
+  dplyr::filter(logCSPIgG == 0) %>%
+  dplyr::select(treat, Outcome, logCSPIgG, CSPIgG_cat, contains("Cytokine"), contains("ICS"), contains("antigen"), contains("phago")) %>%
+  pivot_longer(., cols = c(5:ncol(.)), names_to = "variable", values_to = "values") %>%
+  ggplot(., aes(x = treat, y = values, fill = Outcome, color = Outcome)) +
+  geom_point(position = position_jitterdodge(), size = 0.25) +
+  geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA, weight = 0.5, size = 0.25) +
+  ggpubr::stat_compare_means(aes(group = Outcome), label = "p.format", method = "wilcox.test", label.x.npc = "center", vjust = 1, symnum.args = symnum.args, show.legend = FALSE, size = pvalfontsize) +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  ylab("module expression score") +
+  theme_bw(base_family = basefont, base_size = basefontsize) +
+  theme(#axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        #axis.text.y=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.x=element_blank(),
+        strip.background = element_blank(),
+        legend.position="top"
+        ) +
+  facet_wrap(~variable, scales = "free_y", nrow=8)
+```
+
+```{r save Cytokine_ICS_noCSPIgG_Outcome, include=FALSE, echo=FALSE, eval=FALSE}
+ggsave(Cytokine_ICS_noCSPIgG_Outcome_BoxPlots, file = paste0(figdir, "Fig SX Cytokine ICS no CSP IgG Outcome BoxPlots.pdf"), device = cairo_pdf, units = "in", height = 6, width = 6)
+```
+
+```{r CD163_EndoCab_splitCSPIgG_Outcome, fig.align='center', fig.width=8, fig.height=8, include=FALSE, echo=FALSE, eval=FALSE}
+basefont <- "sans"
+basefontsize <- 10
+pvalfontsize <- 4
+
+CD163_EndoCab_splitCSPIgG_Outcome_BoxPlots <- myMESdat %>%
+  rownames_to_column(var = "SAMPLEID") %>%
+  right_join(., readRDS("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/Jyoti Data CD163 and EndoCab/PfSPZ_scd163_127Samples_dataframe_07062021.rds") %>%
+               rownames_to_column(var = "SAMPLEID") %>%
+               dplyr::select(c(SAMPLEID, "ng/ml")) %>%
+               dplyr::rename(sCD163_plasma = "ng/ml"),
+             by="SAMPLEID") %>%
+    right_join(., readRDS("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/Jyoti Data CD163 and EndoCab/PfSPZ_endocab_128Samples_Assay1&2_dataframe_07062021.rds") %>%
+               rownames_to_column(var = "SAMPLEID") %>%
+               dplyr::select(c(SAMPLEID, "MMU/ml")) %>%
+               dplyr::rename(EndoCAb = "MMU/ml"),
+             by="SAMPLEID") %>%
+  dplyr::select(treat, Outcome, logCSPIgG, CSPIgG_cat, sCD163_plasma, EndoCAb) %>%
+  pivot_longer(., cols = c(5:ncol(.)), names_to = "variable", values_to = "values") %>%
+  drop_na() %>%
+  ggplot(., aes(x = treat, y = values, fill = Outcome, color = Outcome)) +
+  geom_point(position = position_jitterdodge(), size = 0.25) +
+  geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA, weight = 0.5, size = 0.25) +
+  ggpubr::stat_compare_means(aes(group = Outcome), label = "p.format", method = "wilcox.test", label.x.npc = "center", vjust = 1, symnum.args = symnum.args, show.legend = FALSE, size = 4) +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  ylab("MMU/ml or ng/ml") +
+  theme_bw(base_family = basefont, base_size = basefontsize) +
+  theme(#axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        #axis.text.y=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.x=element_blank(),
+        strip.background = element_blank(),
+        legend.position="top"
+        ) +
+  facet_wrap(~variable+CSPIgG_cat, scales = "free_y", nrow=2)
+
+CD163_EndoCab_splitCSPIgG_Outcome_BoxPlots
+```
+
+```{r save CD163_EndoCab_splitCSPIgG_Outcome, eval=FALSE, include=FALSE, echo=FALSE}
+ggsave(CD163_EndoCab_splitCSPIgG_Outcome_BoxPlots, file = paste0(figdir, "Fig SX CD163 EndoCAb split CSP IgG Outcome BoxPlots.pdf"), device = cairo_pdf, units = "in", height = 2, width = 2)
+```
+
+```{r Cytokine_split_CSPIgG_Outcome, fig.align='center', fig.width=12, fig.height=12, include=FALSE, echo=FALSE, eval=FALSE}
+basefont <- "sans"
+basefontsize <- 7
+pvalfontsize <- 4
+
+Cytokine_split_CSPIgG_Outcome_BoxPlots <- myMESdat %>%
+  dplyr::select(treat, Outcome, logCSPIgG, CSPIgG_cat, contains("CytokineObs")) %>%
+  pivot_longer(., cols = c(5:ncol(.)), names_to = "variable", values_to = "values") %>%
+  ggplot(., aes(x = treat, y = values, fill = Outcome, color = Outcome)) +
+  geom_point(position = position_jitterdodge(), size = 0.25) +
+  geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA, weight = 0.5, size = 0.25) +
+  ggpubr::stat_compare_means(aes(group = Outcome), label = "p.format", method = "wilcox.test", label.x.npc = "center", vjust = 1, symnum.args = symnum.args, show.legend = FALSE, size = 4) +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  ylab("module expression score") +
+  theme_bw(base_family = basefont, base_size = basefontsize) +
+  theme(#axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        #axis.text.y=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.x=element_blank(),
+        strip.background = element_blank(),
+        legend.position="top"
+        ) +
+  facet_wrap(~variable+CSPIgG_cat, scales = "free_y", nrow=9)
+
+Cytokine_split_CSPIgG_Outcome_BoxPlots
+```
+
+```{r save Cytokine_split_CSPIgG_Outcome, eval=FALSE, include=FALSE, echo=FALSE}
+ggsave(Cytokine_split_CSPIgG_Outcome_BoxPlots, file = paste0(figdir, "Fig SX Cytokine split CSP IgG Outcome BoxPlots.pdf"), device = cairo_pdf, units = "in", height = 5.4, width = 3)
+```
+
+```{r ICS_split_CSPIgG_Outcome, fig.align='center', fig.width=12, fig.height=12, include=FALSE, echo=FALSE, eval=FALSE}
+basefont <- "sans"
+basefontsize <- 9
+pvalfontsize <- 4
+
+ICS_split_CSPIgG_Outcome_BoxPlots <- myMESdat %>%
+  dplyr::select(treat, Outcome, logCSPIgG, CSPIgG_cat, contains("ICS")) %>%
+  pivot_longer(., cols = c(5:ncol(.)), names_to = "variable", values_to = "values") %>%
+  ggplot(., aes(x = treat, y = values, fill = Outcome, color = Outcome)) +
+  geom_point(position = position_jitterdodge(), size = 0.25) +
+  geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA, weight = 0.5, size = 0.25) +
+  ggpubr::stat_compare_means(aes(group = Outcome), label = "p.format", method = "wilcox.test", label.x.npc = "center", vjust = 1, symnum.args = symnum.args, show.legend = FALSE, size = 4) +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  ylab("module expression score") +
+  theme_bw(base_family = basefont, base_size = basefontsize) +
+  theme(#axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        #axis.text.y=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.x=element_blank(),
+        strip.background = element_blank(),
+        legend.position="top"
+        ) +
+  facet_wrap(~variable+CSPIgG_cat, scales = "free_y", ncol=4)
+
+ICS_split_CSPIgG_Outcome_BoxPlots
+```
+
+```{r save ICS_split_CSPIgG_Outcome, eval=FALSE, include=FALSE, echo=FALSE}
+ggsave(ICS_split_CSPIgG_Outcome_BoxPlots, file = paste0(figdir, "Fig SX ICS split CSP IgG Outcome BoxPlots.pdf"), device = cairo_pdf, units = "in", height = 6, width = 4)
+
+foodat <- myMESdat %>%
+  dplyr::filter(logCSPIgG == 0)
+table(foodat$Outcome,foodat$treat)
+```
+
+### Plot boxplots between innate low BTM expression in P vs NP stratfied by CSP-specific IgG presence/absence and treatment
+
+Shown is p value for Wilcoxon test between P and NP.
+
+```{r figure SX low BTM innate grouped boxplot, fig.align='center', fig.height=48, fig.width=12}
+#Figure Wilcoxon test between innate low BTM expression in P vs NP stratefied by CSP-specific IgG presence/absence and treatment
+basefont <- "sans"
+basefontsize <- 10
+pvalfontsize <- 4
+
+addSmallLegend <- function(myPlot, pointSize = 0.25, textSize = 6, spaceLegend = 0.6) {
+    myPlot +
+        guides(shape = guide_legend(override.aes = list(size = pointSize)),
+               color = guide_legend(override.aes = list(size = pointSize))) +
+        theme(legend.title = element_text(size = textSize), 
+              legend.text  = element_text(size = textSize),
+              legend.key.size = unit(spaceLegend, "lines"))
+}
+
+lowBTM_innate_splitCSPIgG_Outcome_BoxPlots <- myMESdat %>%
+  #dplyr::filter(logCSPIgG > 0) %>%
+  dplyr::select(treat, Outcome, logCSPIgG, CSPIgG_cat, contains("inflamm") | contains("LPS") | contains("TLR") | contains("innate") | contains("NFkB") | contains("antigen") | contains("lysosome") | contains("activat") & contains("dendritic") | contains("activat") & contains("monocyt") | contains("activat") & contains("DC") | contains("activat") & contains("myeloid") | contains("IFN") | contains("interferon") | contains("viral") | contains("complement")) %>%
+  dplyr::select(!contains("CytokineObs")) %>%
+  dplyr::select(!contains("esting")) %>%
+  dplyr::select(!contains("ICS")) %>%
+  pivot_longer(., cols = c(5:ncol(.)), names_to = "variable", values_to = "values") %>%
+  ggplot(., aes(x = treat, y = values, fill = Outcome, color = Outcome)) +
+  geom_point(position = position_jitterdodge(), size = 0.25) +
+  geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA, weight = 0.5, size = 0.25) +
+  ggpubr::stat_compare_means(aes(group = Outcome), label = "p.format", method = "wilcox.test", label.x.npc = "center", vjust = 1, symnum.args = symnum.args, show.legend = FALSE, size = 3) +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  ylab("module expression score") +
+  theme_bw(base_family = basefont, base_size = basefontsize) +
+  theme(#axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        #axis.text.y=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.title.x=element_blank(),
+        strip.background = element_blank(),
+        legend.position="top"
+        ) +
+  facet_wrap(vars(variable, CSPIgG_cat), scales = "free_y", ncol=4,
+             labeller = labeller(variable = label_wrap_gen(width = 25)))
+
+lowBTM_innate_splitCSPIgG_Outcome_BoxPlots
+```
+
+### Table S8 Wilcoxon test between innate low BTM expression in P vs NP stratified by CSP-specific IgG presence/absence and treatment
+
+Show only comparisons with p<0.05.
+
+```{r innate_splitCSPIgG_Outcome_BoxPlots_data, echo=TRUE, message=FALSE, warning=FALSE}
+lowBTM_innate_splitCSPIgG_Outcome_BoxPlots_data <- ggplot_build(lowBTM_innate_splitCSPIgG_Outcome_BoxPlots)
+stat_res <- lowBTM_innate_splitCSPIgG_Outcome_BoxPlots_data$data[[3]]
+values_res <- lowBTM_innate_splitCSPIgG_Outcome_BoxPlots_data$data[[2]]
+foodat <- myMESdat %>%
+  #select only pertinent variables and innate BTMs
+  dplyr::select(treat, Outcome, logCSPIgG, CSPIgG_cat, contains("inflamm") | contains("LPS") | contains("TLR") | contains("innate") | contains("NFkB") | contains("antigen") | contains("lysosome") | contains("activat") & contains("dendritic") | contains("activat") & contains("monocyt") | contains("activat") & contains("DC") | contains("activat") & contains("myeloid") | contains("IFN") | contains("interferon") | contains("viral") | contains("complement")) %>%
+  dplyr::select(!contains("CytokineObs")) %>%
+  dplyr::select(!contains("esting")) %>%
+  dplyr::select(!contains("ICS")) %>%
+  pivot_longer(., cols = c(5:ncol(.)), names_to = "variable", values_to = "values") %>%
+  droplevels()
+
+#Convert to Table S8
+res <- foodat %>%
+  dplyr::select(-c(logCSPIgG)) %>%
+  group_by(variable, CSPIgG_cat, treat) %>% 
+  do(w = wilcox.test(values~Outcome, data=., paired=FALSE, exact = TRUE)) %>%
+       dplyr::summarise(treat, variable, CSPIgG_cat,
+                 Wilcox_stat = w$statistic,
+                 Wilcox_p = w$p.value) 
+res2 <- foodat %>%
+  dplyr::select(-c(logCSPIgG)) %>%
+  group_by(variable, CSPIgG_cat, treat, Outcome) %>%
+  dplyr::summarise(median = median(values)) %>%
+  pivot_wider(., names_from = Outcome, values_from = median)
+
+res_combine <- res2 %>%
+  right_join(., res,
+            by = c("variable", "CSPIgG_cat", "treat")) %>%
+  rename(median_NP = "not protected",
+         median_P = "protected") %>%
+  arrange(variable)
+
+res_combine %>%
+  arrange(Wilcox_p) %>%
+  filter(Wilcox_p<0.05) %>%
+  knitr::kable()
+```
+
+```{r write Table S8 Innate low BTM module expression scores by CSPIgG Cat by Treat by Outcome, include=FALSE, eval=FALSE, echo=FALSE}
+#writexl::write_xlsx(res_combine, paste0(figdir, "Table S8 Innate low BTM module expression scores by CSPIgG Cat by Treat by Outcome.xlsx"))
+```
+
+```{r plot lowBTM INNATE SPLIT CSP IgG Outcome BoxPlots, include=FALSE, eval=FALSE, echo=FALSE}
+# ggsave(addSmallLegend(lowBTM_innate_splitCSPIgG_Outcome_BoxPlots), file = paste0(figdir, "Fig SX lowBTM INNATE SPLIT CSP IgG Outcome BoxPlots.pdf"), device = cairo_pdf, units = "in", height = 9.8, width = 7.8)
+```
+
+### Low BTMs that are *significantly different* (p<0.05) at pre-vaccination baseline between P and NP in infants who without CSP-specific IgG and who would receive 1.8x10^6 PfSPZ
+
+```{r innate_significant_CSPneg_highdosePfSPZ_BoxPlots, fig.align='center', fig.width=12, fig.height=9}
+basefont <- "sans"
+basefontsize <- 10
+pvalfontsize <- 4
+
+#select significant BTMs (p<0.05) in CSP IgG (-) among high-dose PfSPZ group only
+res_signif <- res_combine %>%
+  filter(Wilcox_p<0.05 & CSPIgG_cat == "CSP-specific IgG (-)" & treat == "1.8 x 10^6 PfSPZ")
+lowBTM_innate_significant_CSPneg_highdosePfSPZ_BoxPlots <- myMESdat %>%
+  dplyr::filter(logCSPIgG == 0 & treat == "1.8 x 10^6 PfSPZ") %>%
+  dplyr::select(treat, Outcome, logCSPIgG, CSPIgG_cat, res_signif$variable) %>%
+  mutate(Outcome = ifelse(Outcome == "protected", "P", "NP")) %>%
+  pivot_longer(., cols = c(5:ncol(.)), names_to = "variable", values_to = "values") %>%
+  ggplot(., aes(x = Outcome, y = values, fill = Outcome, color = Outcome)) +
+  geom_point(position = position_jitterdodge(), size = 0.35) +
+  geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA, weight = 0.25, size = 0.15) +
+  ggpubr::stat_compare_means(aes(group = Outcome), label = "p.format", method = "wilcox.test", label.x.npc = "center", vjust = 1, symnum.args = symnum.args, show.legend = FALSE, size = 3) +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  ylab("module expression score") +
+  theme_bw(base_family = basefont, base_size = basefontsize) +
+  theme(axis.ticks.x=element_blank(),
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        strip.background = element_blank(),
+        legend.position="top"
+        ) +
+  facet_wrap(vars(variable), scales = "free_y", ncol=4,
+             labeller = labeller(variable = label_wrap_gen(width = 25)))
+
+lowBTM_innate_significant_CSPneg_highdosePfSPZ_BoxPlots
+```
+
+```{r lowBTM_innate_significant_CSPneg_highdosePfSPZ_BoxPlots_data, include=FALSE, eval=FALSE, echo=FALSE }
+lowBTM_innate_significant_CSPneg_highdosePfSPZ_BoxPlots_data <- ggplot_build(lowBTM_innate_significant_CSPneg_highdosePfSPZ_BoxPlots)
+```
+
+
+```{r save low BTM innate signatures outcome high dose boxplots, include=FALSE, eval=FALSE, echo=FALSE}
+ggsave(addSmallLegend(lowBTM_innate_significant_CSPneg_highdosePfSPZ_BoxPlots), file = paste0(figdir, "Fig7C_lowBTM_INNATE_signif_Outcome_BoxPlots_JCI_revision.pdf"), device = cairo_pdf, units = "in", height = 5, width = 6.1)
+```
+
+```{r heatmap of innate signatures vs CSP at baseling by outcome by group, echo = FALSE, include=FALSE, eval=FALSE}
+#heatmap of innate signatures vs CSP at baseline by outcome by group
+library(Biobase)
+hmdat <- myMESdat %>%
+  #dplyr::filter(logCSPIgG > 0) %>%
+  dplyr::select(treat, Outcome, logCSPIgG, CSPIgG_cat, contains("inflamm") | contains("LPS") | contains("TLR") | contains("innate") | contains("NFkB") | contains("antigen") | contains("lysosome") | contains("activat") & contains("dendritic") | contains("activat") & contains("monocyt") | contains("activat") & contains("DC") | contains("activat") & contains("myeloid") | contains("IFN") | contains("interferon") | contains("viral") | contains("complement")) %>%
+  dplyr::select(!contains("CytokineObs")) %>%
+  dplyr::select(!contains("esting")) %>%
+  dplyr::select(!contains("ICS"))
+hm_phenodat <- AnnotatedDataFrame(hmdat[,c(1:4)])
+innate_hm_eset <- ExpressionSet(assayData = as.matrix(t(hmdat[,-c(1:4)])), phenoData = hm_phenodat)  
+innate_hm_eset <- innate_hm_eset[,order(innate_hm_eset$treat, innate_hm_eset$CSPIgG_cat,innate_hm_eset$Outcome)]
+annotation <- pData(innate_hm_eset)[,c(1,2,4)]
+paletteLength <- 50
+myColor <- colorRampPalette(c("blue", "white", "red"))(paletteLength)
+# length(breaks) == length(paletteLength) + 1
+# use floor and ceiling to deal with even/odd length pallettelengths
+myBreaks <- c(seq(min(exprs(innate_hm_eset)), 0, length.out=ceiling(paletteLength/2) + 1), 
+              seq(max(exprs(innate_hm_eset))/paletteLength, max(exprs(innate_hm_eset)), length.out=floor(paletteLength/2)))
+
+pheatmap::pheatmap(exprs(innate_hm_eset), annotation = rev(annotation), cluster_cols = FALSE, show_colnames = FALSE, color = myColor, breaks = myBreaks)
+```

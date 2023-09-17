@@ -1,0 +1,136 @@
+---
+title: "KSPZV1 Monocyte Pretreatment Phagocytosis - analysis of Jyoti's data"
+author: "Tuan Tran"
+date: "2023-07-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load require packages
+
+```{r load require packages, message=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+```
+
+## Assess phagocytic capacity of primary monocytes pre-treated with sporozoites or infected erythrocytes
+
+```{r readin data}
+raw_dat_aim1 <- readxl::read_excel("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Jyoti Data KSPZV1 JCI Resubmission/Table 4_Aim2_phagocytosis data.xlsx", sheet = 1)
+
+raw_dat_aim2 <- readxl::read_excel("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Jyoti Data KSPZV1 JCI Resubmission/Table 4_Aim2_phagocytosis data.xlsx", sheet = 2)
+```
+
+## Make comparisons and plot for Aim 1
+
+Compare to effect of PfSPZ pretreatment on PfSPZ phagocytosis in CD14+ and CD14+CD16+ monocytes.
+
+### First prepare data:
+
+```{r make comparison and plot aim 1, echo = TRUE, fig.align='center', fig.width=4, fig.height=4}
+raw_dat_aim1_reduced <- raw_dat_aim1  %>%
+  mutate(Treatment = factor(Treatment,
+                            levels = c("Media only",
+                                       "1st Pfspz exp only",
+                                       "2nd Pfspz exp only",
+                                       "1st + 2nd Pfspz exp"),
+                            labels = c("media only",
+                                       "1\u00B0 PfSPZ, no 2\u00B0 PfSPZ",
+                                       "mock 1\u00B0, 2\u00B0 PfSPZ",
+                                       "1\u00B0 and 2\u00B0 PfSPZ"))) %>%
+  dplyr::rename("PfSPZ phagocytic index" = "Phagocytosis",
+                "treatment" = "Treatment")
+```
+
+### Plot all conditions for Aim 1 to assess phagocytosis in controls. Run ANOVA to see if there is a difference between any of the groups.
+
+### Figure A
+
+```{r plot aim 1 all conditions, echo = TRUE, fig.align='center', fig.width=4, fig.height=4}
+raw_dat_aim1_reduced  %>%
+  ggplot(., aes(x = treatment, y = `PfSPZ phagocytic index`)) + 
+  geom_point()+
+  geom_errorbar(stat = "summary", fun = "mean", width=0.2, aes(ymax=after_stat(y), ymin=after_stat(y),
+                                                                    group=factor(treatment)),
+                color="black") +
+  stat_compare_means(method = "anova", label = "p.format") +
+  scale_y_continuous(expand = expansion(add = c(8, 8))) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        legend.position = "none") +
+  facet_wrap(~`Cell type`)
+```
+
+There is an obvious difference between any treatment with secondary PfSPZ and no secondary PfSPZ.
+However, our main concern is whether PfSZP pretreatment (primary PfSPZ) affects subsequent PfSPZ (secondary PfSPZ) phagocytosis. Thus "mock primary PfSPZ, secondary PfSPZ" vs "primary and secondary PfSPZ" is our main comparison.
+
+### Figure B
+
+```{r plot aim 1 for only two conditions, echo = TRUE, fig.align='center', fig.width=4, fig.height=4}
+raw_dat_aim1_reduced  %>%
+  filter(treatment == "mock 1\u00B0, 2\u00B0 PfSPZ" |
+           treatment == "1\u00B0 and 2\u00B0 PfSPZ") %>%
+  ggplot(., aes(x = treatment, y = `PfSPZ phagocytic index`)) + 
+  geom_point()+
+  geom_errorbar(stat = "summary", fun = "mean", width=0.2, aes(ymax=after_stat(y), ymin=after_stat(y),
+                                                                    group=factor(treatment)),
+                color="black") +
+  stat_compare_means(method = "t.test", label = "p.format") +
+  scale_y_continuous(expand = expansion(add = c(8, 8))) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        legend.position = "none") +
+  facet_wrap(~`Cell type`)
+```
+Conclusion: Pretreatment with PfSPZ does not enhance subsequent PfSPZ phagocytosis by CD14+ or CD14+CD16+ monocytes.
+
+## Make comparisons and plot for Aim 2
+
+Compare effect of PBMC + iRBC pretreatment on PfSPZ phagocytosis in CD14+ and CD14+CD16+ monocytes.
+
+Jyoti: Better comparison would be CD14+CD16- vs CD14+CD16+ monocytes given that CD14+ includes a small number of CD14+CD16+. The big question would be how many CD14+CD16- monocytes did you observe? What is the proportion of CD14+CD16+ monocytes of all the CD14+ monocytes, and what is the absolute number. A larger proportion and absolute number would give you more confidence that the differences between pretreatments are true.
+
+Note that "P+uRBC cond media" and "P+PfiRBC cond media" are just background controls since they do not have any PfSPZ. They really are just controls to assess background such as autofluorescence. Thus, we really don't need to include these groups that do not have PfSPZ in the analysis.
+
+```{r prepare data for aim 2, echo=TRUE, fig.align='center', fig.width=4, fig.height=4}
+raw_dat_aim2_reduced <- raw_dat_aim2 %>%
+  mutate(Treatment = factor(Treatment,
+                            levels = c("P+uRBC cond media",
+                                       "P+PfiRBC cond media",
+                                       "P+uRBC cond media+Pfspz",
+                                       "P+PfiRBC cond media+Pfspz"),
+                            labels = c("PBMC + uRBC CM",
+                                       "PBMC + iRBC CM",
+                                       "PBMC + uRBC CM + PfSPZ",
+                                       "PBMC + iRBC CM + PfSPZ"))) %>%
+  dplyr::rename("PfSPZ phagocytic index" = "Phagocytosis",
+                "pretreatment" = "Treatment") %>%
+  filter(grepl("PfSPZ", pretreatment)) %>% #include only groups with PfSPZ (see explanation above)
+  mutate(pretreatment = gsub(" \\+ PfSPZ", "", pretreatment)) %>% #rename PfSPZ groups by removing "PfSPZ" for brevity
+  mutate(pretreatment = relevel(factor(pretreatment), "PBMC + uRBC CM")) #relevel for uRBC is reference (first group)
+```
+
+### Figure C
+
+```{r plot aim 2, echo=TRUE, fig.align='center', fig.width=4, fig.height=4}
+raw_dat_aim2_reduced  %>%
+  ggplot(., aes(x = pretreatment, y = `PfSPZ phagocytic index`)) + 
+  geom_point()+
+  geom_errorbar(stat = "summary", fun = "mean", width=0.2, aes(ymax=after_stat(y), ymin=after_stat(y),
+                                                                    group=factor(pretreatment)),
+                color="black") +
+  stat_compare_means(method = "t.test", label = "p.format") +
+  scale_y_continuous(expand = expansion(add = c(8, 8))) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+        legend.position = "none") +
+  facet_wrap(~`Cell type`)
+```
+
+CM = conditioned media
+
+Conclusion: Pretreatment with PBMC+iRBC significantly enhances PfSPZ phagocytosis by CD14+CD16+ monocytes.
