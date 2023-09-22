@@ -1,7 +1,7 @@
 ## Objective: Converts High Level BTM List into Tibble Long Format for Convenient Merging with Feature Data
 
 library(tidyverse)
-source("https://github.com/TranLab/kspzv1-systems/blob/main/helper/Make%20low%20and%20high%20level%20BTMs.R?raw=TRUE")
+source("https://raw.githubusercontent.com/TranLab/kspzv1-systems/main/helper/Make%20low%20and%20high%20level%20BTMs.R")
 
 #enframe(hilevel.list)
 hiBTM.geneid.long <- do.call(rbind, hilevel.list) %>%
