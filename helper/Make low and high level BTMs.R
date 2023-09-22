@@ -1,13 +1,15 @@
 
-library(openxlsx)
+library(readxl)
 library(reshape2)
-datadirtemp <- "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Transcriptional Modules and Genesets/BTM SupplementaryData_TutorialPackage/"
+#datadirtemp <- "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Transcriptional Modules and Genesets/BTM SupplementaryData_TutorialPackage/"
 
 #############################
 #Make list of low level BTMs#
 #############################
-
-btmxls <- openxlsx::read.xlsx(paste0(datadirtemp,"btm_annotation_table.xlsx"), sheet = 1)
+temp <- tempfile(fileext = ".xlsx")
+dl <- drive_download(
+  as_id("1-qEA1jZIJ4zuwNs_mbb0QBdmOx9guFPP"), path = temp, overwrite = TRUE)
+btmxls <- read_excel(file = dl$local_path, sheet = 1)
 btm <- as.list(as.character(btmxls$Module.member.genes))
 names(btm) <- btmxls$ID
 
