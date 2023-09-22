@@ -10,7 +10,7 @@ temp <- tempfile(fileext = ".xlsx")
 dl <- drive_download(
   as_id("1-qEA1jZIJ4zuwNs_mbb0QBdmOx9guFPP"), path = temp, overwrite = TRUE)
 btmxls <- read_excel(path = dl$local_path)
-btm <- as.list(as.character(btmxls$Module.member.genes))
+btm <- as.list(as.character(btmxls$`Module member genes`))
 names(btm) <- btmxls$ID
 
 for(i in 1:length(btm)){
