@@ -23,9 +23,11 @@ hiBTM.geneid.wide <- hiBTM.geneid.long %>%
   replace(is.na(.), 0)
 
 #Monaco
-temp_url <- ("https://github.com/TranLab/kspzv1-systems/blob/main/helper/MonacoModules.rds?raw=TRUE")
-download.file(temp_url,"MonacoModules.rds", method="curl")
-monaco.list <- readRDS("MonacoModules.rds")
+#dl "MonacoModules.rds" from google drive
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1-yJW005oPr0RcjXR0YETs9nnRO5g6hYz"), path = temp, overwrite = TRUE)
+monaco.list <- readRDS(file = dl$local_path)
 monaco.geneid.long <- do.call(rbind, monaco.list) %>%
   t() %>%
   as_tibble() %>%
