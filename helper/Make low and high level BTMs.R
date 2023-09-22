@@ -23,8 +23,10 @@ for(i in 1:length(btm)){
 ################################
 #Make list of higher level BTMs#
 ################################
-
-hilevel <- read.csv(paste0(datadirtemp, "BTM_high_level_annotations.csv"))[,1:2]
+temp <- tempfile(fileext = ".xlsx")
+dl <- drive_download(
+  as_id("1-vA_SGpfdAAa4kKiKR7-YxswZ1yqCWd_"), path = temp, overwrite = TRUE) #BTM_high_level_annotations.csv
+hilevel <- read.csv(dl$local_path)[,1:2]
 as.list(hilevel)
 colnames(hilevel) <- c("BTM", "SUBGROUP")
 recast(hilevel, SUBGROUP~BTM, id.var = c("SUBGROUP","BTM"))
