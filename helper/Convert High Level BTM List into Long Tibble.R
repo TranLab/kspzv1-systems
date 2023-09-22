@@ -1,7 +1,7 @@
 ## Objective: Converts High Level BTM List into Tibble Long Format for Convenient Merging with Feature Data
 
 library(tidyverse)
-source("/Volumes/GoogleDrive/My Drive/R scripts/Make low and high level BTMs.R")
+#source("/Volumes/GoogleDrive/My Drive/R scripts/Make low and high level BTMs.R")
 
 #enframe(hilevel.list)
 hiBTM.geneid.long <- do.call(rbind, hilevel.list) %>%
