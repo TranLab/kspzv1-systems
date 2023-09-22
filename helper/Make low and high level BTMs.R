@@ -9,7 +9,7 @@ library(reshape2)
 temp <- tempfile(fileext = ".xlsx")
 dl <- drive_download(
   as_id("1-qEA1jZIJ4zuwNs_mbb0QBdmOx9guFPP"), path = temp, overwrite = TRUE)
-btmxls <- read_excel(file = dl$local_path, sheet = 1)
+btmxls <- read_excel(path = dl$local_path, sheet = 1)
 btm <- as.list(as.character(btmxls$Module.member.genes))
 names(btm) <- btmxls$ID
 
