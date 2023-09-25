@@ -1,6 +1,7 @@
 # kspzv1-systems-analysis
 Code for systems analysis of KSPZV1 malaria vaccine trial.
 
+<<<<<<< HEAD
 ## Supervised clustering
 
 [PC-LDA supervised clustering, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-PCA-LDA-Plots-Baseline-Revision.html)
@@ -48,3 +49,8 @@ Code for systems analysis of KSPZV1 malaria vaccine trial.
 
 [FSTL4 heatmap from other datasets (NEW)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-FSTL4-heatmap-from-other-datasets-06012022.html)
 
+=======
+## Unsupervised hierarchical clustering heatmaps
+
+[Complex heatmap and downstream clustering analyses, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-Complex-Heatmaps-Baseline-JCI-Revision.html)
+>>>>>>> 867903f71884a9df2a137ea257c74065876da8bb
