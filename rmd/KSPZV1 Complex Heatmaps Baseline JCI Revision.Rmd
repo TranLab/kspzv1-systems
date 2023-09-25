@@ -300,8 +300,8 @@ print(hm)
 dev.off()
 ```
 
-```{r draw to extract clustering info columns, message=FALSE, warning=FALSE, fig.width= 12, fig.height=6, fig.align='center'}
-hm <- draw(hm, heatmap_legend_side="bottom", annotation_legend_side="right",
+```{r draw to extract clustering info columns, message=FALSE, warning=FALSE, fig.width= 14, fig.height=6, fig.align='center'}
+hm <- draw(hm, heatmap_legend_side="top", annotation_legend_side="right",
            legend_grouping = "original")
 ```
 

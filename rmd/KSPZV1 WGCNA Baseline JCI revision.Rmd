@@ -1,7 +1,7 @@
 ---
 title: "KSPZV1 WGCNA baseline"
 author: "Tuan M. Tran"
-date: "04/24/2023"
+date: "09/24/2023"
 output: html_document
 ---
 
@@ -14,7 +14,7 @@ References:
 https://horvath.genetics.ucla.edu/html/CoexpressionNetwork/Rpackages/WGCNA/Tutorials/
 https://horvath.genetics.ucla.edu/html/CoexpressionNetwork/JMiller/Tutorial%20document.pdf
 
-Reviewer requested that we provide scatter plots for the correlations between modules and phenotypes.
+Reviewer requested that we provide scatter plots for the correlations between modules and phenotypes. Review of the original code revealed that using pearson or spearman's correlation to assess the relationship between modules and binary traits was not appropriate. Thus, we performed limma (empirical Bayes moderated t test) and presented differences as beeswarm plots with mean and 95%CI.
 
 ### Load packages
 
@@ -38,6 +38,7 @@ library(ggpubr)
 library(googledrive)
 allowWGCNAThreads()
 library(broom)
+library(ComplexHeatmap)
 ```
 
 ### Options and define variables
@@ -258,7 +259,9 @@ Pf_baseline <- topTable(fit2, coef="infected_first_vax - uninfected_first_vax", 
              by = "module") %>%
   mutate(comparison = "infected_vs_uninfected_baseline") %>%
   dplyr::select(comparison, module, module_color, hub_gene, logFC, P.Value, adj.P.Val)
-head(Pf_baseline)
+Pf_baseline %>%
+  filter(P.Value<0.05) %>%
+  knitr::kable()
 
 #prevax_antiCSPIgG
 prevax_antiCSPIgG <- factor(wgcna_eset$`pre-vax anti-CSP IgG`)
@@ -279,7 +282,9 @@ CSPAb_baseline <- topTable(fit2, coef="CSPAb_first_vax - noCSPAb_first_vax", num
              by = "module") %>%
   mutate(comparison = "present_vs_absent_baseline") %>%
   dplyr::select(comparison, module, module_color, hub_gene, logFC, P.Value, adj.P.Val)
-head(CSPAb_baseline)
+CSPAb_baseline %>%
+  filter(P.Value<0.05) %>%
+  knitr::kable()
 
 #protection
 outcome_3mos <- factor(wgcna_eset$`uninfected, 3 months`)
@@ -300,7 +305,9 @@ p_vs_np_3mos <- topTable(fit2, coef="protected - not_protected", number = Inf) %
              by = "module") %>%
   mutate(comparison = "protected_vs_not_protected") %>%
   dplyr::select(comparison, module, module_color, hub_gene, logFC, P.Value, adj.P.Val)
-head(p_vs_np_3mos)
+p_vs_np_3mos %>%
+  filter(P.Value<0.05) %>%
+  knitr::kable()
 
 #CSP Ab response 
 FC_CSPAb <- factor(wgcna_eset$`fold-change anti-CSP IgG`)
@@ -320,7 +327,9 @@ hi_vs_low_CSP <- topTable(fit2, coef="high_responder - low_responder", number = 
              by = "module") %>%
   mutate(comparison = "hi_vs_low_CSP") %>%
   dplyr::select(comparison, module, module_color, hub_gene, logFC, P.Value, adj.P.Val)
-head(hi_vs_low_CSP)
+hi_vs_low_CSP %>%
+  filter(P.Value<0.05) %>%
+  knitr::kable()
 
 all_module_trait_dat <- rbind(Pf_baseline, CSPAb_baseline, hi_vs_low_CSP, p_vs_np_3mos) %>%
   arrange(P.Value)
@@ -340,10 +349,10 @@ all_module_trait_hm_dat <- all_module_trait_dat %>%
 ```{r heatmap wgcna limma, fig.align='center', fig.height=9, fig.width=9}
 all_module_trait_hm_annot_dat <- all_module_trait_hm_dat %>%
   rownames_to_column(var= "hub_gene") %>%
-  select(hub_gene)
+  dplyr::select(hub_gene)
 
 all_module_trait_hm_mat <- all_module_trait_hm_dat %>%
-  select(-module_color) %>%
+  dplyr::select(-module_color) %>%
   as.matrix()
 
 row_ha = rowAnnotation(module = all_module_trait_hm_dat$module_color)
@@ -364,14 +373,22 @@ myBreaks <- c(seq(-1*max(abs(all_module_trait_hm_mat)), 0, length.out=ceiling(pa
               seq(max(all_module_trait_hm_mat)/paletteLength, max(all_module_trait_hm_mat), length.out=floor(paletteLength/2)))
 myColor <- colorRampPalette(c("dodgerblue", "white", "#b22222"))(length(myBreaks))
 
-cairo_pdf(file = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Figure 2A Revised to WGCNA limma.pdf", width = 5, height = 5)
-Heatmap(all_module_trait_hm_mat,
+hm <- Heatmap(all_module_trait_hm_mat,
         col = circlize::colorRamp2(myBreaks, myColor),
         color_space = "LAB",
         row_names_side = "left",
         row_dend_side = "right",
         left_annotation = row_ha,
         border = TRUE)
+```
+
+```{r draw hm, fig.align='center', fig.width=4, fig.height=4}
+draw(hm)
+```
+
+```{r save wgcna module trait heatmap, include=FALSE, echo=FALSE, eval=FALSE}
+cairo_pdf(file = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Figure 2A Revised to WGCNA limma.pdf", width = 5, height = 5)
+draw(hm)
 dev.off()
 ```
 
@@ -430,7 +447,7 @@ scatplot_dat_factor_norm_test <- scatplot_dat_factor %>%
   group_by(module, trait, value)%>% 
   do(tidy(shapiro.test(.$MEs))) %>% 
   ungroup() %>%
-  select(-method) %>%
+  dplyr::select(-method) %>%
   mutate(is_normal = ifelse(p.value<0.05, "no","yes"))
   
 
@@ -464,14 +481,21 @@ all_scat_plot <- scatplot_dat_factor %>%
 
 signif_hub_genes_only <- all_module_trait_dat %>%
   filter(hub_gene %in% p_vs_np_3mos_select$hub_gene)
+```
 
+#### Figure S3A of revised manuscript
+
+```{r plot all_scat_plot, fig.align='center', fig.height=6, fig.width=6}
+all_scat_plot
+```
+
+```{r save CI revised WGCNA beeswarm plots with mean 95CI, eval=FALSE, echo=FALSE, include=FALSE}
 ggsave("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Fig SX JCI revised WGCNA beeswarm plots with mean 95CIs.pdf", all_scat_plot, device = "pdf", units = "in", height = 4, width = 5.5)
 ```
 
+```{r 1.8x10^6 PfSPZ only dataset, eval=FALSE, echo=FALSE, include=FALSE}
+#1.8x10^6 PfSPZ only
 
-1.8x10^6 PfSPZ only
-
-```{r 1.8x10^6 PfSPZ only dataset}
 highdose_eset <- wgcna_eset[,wgcna_eset$treat == "1.8 x 10^6 PfSPZ"]
 
 #Pf_baseline
@@ -482,7 +506,6 @@ colnames(design) <- c("uninfected","infected")
 fit <- lmFit(exprs(highdose_eset), design) # Fit linear models for each gene given a series of arrays.
 contrasts <- makeContrasts(infected - uninfected,
                            levels=design) 
-contrasts
 fit2 <- contrasts.fit(fit, contrasts)
 fit2 <- eBayes(fit2, trend=TRUE)
 
@@ -502,7 +525,6 @@ colnames(design) <- c("absent","present")
 fit <- lmFit(exprs(highdose_eset), design) # Fit linear models for each gene given a series of arrays.
 contrasts <- makeContrasts(present - absent,
                            levels=design) 
-contrasts
 fit2 <- contrasts.fit(fit, contrasts)
 fit2 <- eBayes(fit2, trend=TRUE)
 
@@ -522,7 +544,6 @@ colnames(design) <- c("not_protected","protected")
 fit <- lmFit(exprs(highdose_eset), design) # Fit linear models for each gene given a series of arrays.
 contrasts <- makeContrasts(protected - not_protected,
                            levels=design) 
-contrasts
 fit2 <- contrasts.fit(fit, contrasts)
 fit2 <- eBayes(fit2, trend=TRUE)
 
@@ -542,7 +563,6 @@ colnames(design) <- c("low_responder","high_responder")
 fit <- lmFit(exprs(highdose_eset), design) # Fit linear models for each gene given a series of arrays.
 contrasts <- makeContrasts(high_responder - low_responder,
                            levels=design) 
-contrasts
 fit2 <- contrasts.fit(fit, contrasts)
 fit2 <- eBayes(fit2, trend=TRUE)
 hi_vs_low_CSP_highdose <- topTable(fit2, coef="high_responder - low_responder", number = Inf) %>%
@@ -555,16 +575,14 @@ hi_vs_low_CSP_highdose <- topTable(fit2, coef="high_responder - low_responder", 
 head(hi_vs_low_CSP_highdose)
 ```
 
-```{r plot wgcna heatpmap, fig.align='center', fig.height=9, fig.width=4}
+```{r plot wgcna heatpmap, fig.align='center', fig.height=9, fig.width=4, eval=FALSE, echo=FALSE, include=FALSE}
 library(ComplexHeatmap)
 row_ha = rowAnnotation(module = row_annot_dat$module_color)
 col_fun = circlize::colorRamp2(c(-max(all_module_trait_hm_mat), 0, max(all_module_trait_hm_mat)), c("blue", "white", "red"))
 Heatmap(all_module_trait_hm_mat, col = col_fun)
 ```
-
-### Display the correlation values within a heatmap plot (Figure 2A of pre-print)
-
-```{r plot module trait correlations heatmap, warning=FALSE, message=FALSE, fig.align='center', fig.width=8, fig.height=8}
+```{r plot module trait correlations heatmap, warning=FALSE, message=FALSE, fig.align='center', fig.width=8, fig.height=8, eval=FALSE, echo=FALSE, include=FALSE}
+### Display the correlation values within a heatmap plot (Figure 2A of pre-print) -- did not use in revised manuscript
 par(mar = c(11, 9, 1, 1))
 labeledHeatmap(Matrix = modTraitCor.select, xLabels = names(datvar),
                yLabels = rownames(modTraitCor.select), ySymbols = rownames(modTraitCor.select),
@@ -574,8 +592,7 @@ labeledHeatmap(Matrix = modTraitCor.select, xLabels = names(datvar),
 ```
 
 
-```{r scatplot continuous data}
-
+```{r scatplot continuous data, eval=FALSE, echo=FALSE, include=FALSE}
 scatplot_dat_uninfected_continuous <- scatplot_dat %>%
   pivot_longer(cols = c("uninfected, 3 months"), names_to = "trait", values_to = "value")  %>%
   ggplot(., aes(x=value, y=MEs)) +
@@ -642,10 +659,8 @@ FigSX_WCGNA_continuous_corr <- ggarrange(prevaxCSPAb_plot, days2parasitemia_plot
 ggsave("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Fig SX JCI revised WGCNA continuous corrs.pdf", FigSX_WCGNA_continuous_corr, device = "pdf", units = "in", height = 11, width = 9)
 ```
 
-### Identify hub genes 2
-
-
-```{r id hub genes 2, message=FALSE, warning=FALSE}
+```{r id hub genes 3, message=FALSE, warning=FALSE}
+#### Identify hub genes 2
 myColors <- gsub("ME", "", rownames(modTraitCor.select))
 topmodules <- chooseTopHubInEachModule(WGCNA_matrix, net$colors, omitColors = "grey", power = 12.5, type ="signed")
 mytopmodules <- topmodules[myColors] %>%
@@ -666,14 +681,12 @@ hubscores <- hub_score(graph, scale = TRUE, weights = NULL,
   options = arpack_defaults)
 ```
 
+```{r display my topmodules, echo=FALSE, eval=FALSE, include=FALSE}
 ### Top modules and hub genes (rownames for Figure 2A of pre-print)
-
-```{r display my topmodules, echo=FALSE}
 knitr::kable(mytopmodules)
 ```
 
-
-### Plot network graph of significant modules (Figure 2B of pre-print)
+### Plot network graph of significant modules (Figure 2B of revised mansucript)
 
 Network graphs of significant modules containing nodes (red dots) and edges (lines) meeting minimum thresholds. Correlations between nodes in different modules are shown as black edges.
 
@@ -694,9 +707,10 @@ for(i in modTraitP.temp$Module){
 }
 lapply(WGCNA_dat_select, nrow)
 ```
+
+```{r output modules to csv for IPA, eval=FALSE, echo=FALSE, include=FALSE}
 ### Output for Ingenuity Pathways Analysis
 
-```{r output modules to csv for IPA}
 write_csv(WGCNA_dat_select$MEskyblue1,
           "/Users/tuantran/OneDrive - Indiana University/FromGoogle/Manuscripts/KSPZV1 Manuscript/JCI Submission November 2022/MEskyblue1.csv")
 
@@ -710,9 +724,10 @@ write_csv(WGCNA_dat_select$MElavenderblush2,
           "/Users/tuantran/OneDrive - Indiana University/FromGoogle/Manuscripts/KSPZV1 Manuscript/JCI Submission November 2022/MElavenderblush2.csv")
 ```
 
-### Overrepesenation Analysis
+### Overrepesentation Analysis
 
-```{r WGCNA ora}
+```{r WGCNA ora, message=FALSE, warning=FALSE}
+source("https://raw.githubusercontent.com/TranLab/kspzv1-systems/main/helper/ApplyORA2Genesets.R")
 myuniverse <- unique(fData(x)[fData(x)$EnsemblID %in% colnames(WGCNA_matrix),]$GeneSymbol)
 ORA_baseline_bound_df <- c()
 minSize <- 15
@@ -838,7 +853,7 @@ print(myArrangedPlot)
 ```
 
 
-```{r output plot, echo=FALSE, eval=FALSE}
+```{r output plot, echo=FALSE, eval=FALSE, include=FALSE}
 cairo_pdf(filename = "/Users/tuantran/OneDrive - Indiana University/FromGoogle/Manuscripts/KSPZV1 Manuscript/JCI Submission November 2022/Figures for JCI submission/Figure 2C Revised to ORA.pdf", width = 5, height = 4)
 addSmallLegend(myArrangedPlot)
 dev.off()
