@@ -1,24 +1,15 @@
 # kspzv1-systems-analysis
 Code for systems analysis of KSPZV1 malaria vaccine trial.
 
-## Supervised clustering
-
-[PC-LDA supervised clustering, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-PCA-LDA-Plots-Baseline-Revision.html)
-
-[PC-LDA supervised clustering, Δ (post-vax/baseline) (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-PCA-LDA-Plots-Delta-Revision.html)
-
 ## Unsupervised hierarchical clustering heatmaps
 
-[Complex heatmap and downstream clustering analyses, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-Complex-Heatmaps-Baseline-Revision.html)
-
-[Complex heatmap and downstream clustering analyses, Δ (post-vax/baseline) (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-Complex-Heatmaps-Delta-Revision.html)
+[Complex heatmap and downstream clustering analyses, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-Complex-Heatmaps-Baseline-JCI-Revision.html)
 
 ## Differential gene expression and enrichment analysis
 
 [DGE and GSEA between protected and not protected by treatment group, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-DGE-Baseline-Revision.html)
 
 [IPA Upstream Regulator between protected and not protected by treatment group, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-DGE-Baseline-Revision-IPA-Plots.html)
-
 
 [DGE and GSEA within and between Δ protected and Δ not protected for 1.8x10^6 PfSPZ group (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-DGE-Delta-Postvax-High-Dose-PfSPZ-limma-voom-Revision.html)
 
@@ -49,7 +40,5 @@ Code for systems analysis of KSPZV1 malaria vaccine trial.
 [FSTL4 heatmap from other datasets (NEW)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-FSTL4-heatmap-from-other-datasets-06012022.html)
 
 =======
-## Unsupervised hierarchical clustering heatmaps
 
-[Complex heatmap and downstream clustering analyses, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-Complex-Heatmaps-Baseline-JCI-Revision.html)
->>>>>>> 867903f71884a9df2a137ea257c74065876da8bb
+
