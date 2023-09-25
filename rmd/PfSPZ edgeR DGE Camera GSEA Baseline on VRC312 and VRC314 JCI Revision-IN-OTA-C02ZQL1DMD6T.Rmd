@@ -760,22 +760,21 @@ TopTab_BSPZV1_VRC312_VRC314 %>%
 ### Make VRC 312, VRC 314, BSPZV1 tables
 
 ```{r make vrc and bspzv1 study tables, fig.align='center', fig.width=8, fig.height=6}
-study_tab <- data.frame(matrix(c("KPSZV1", "high dose","1,800,000 PfSPZ x 3", "24", "37",
-                                 "VRC 312", "3a", "30,000 PfSPZ x 6", "3", "0",
-                                 "", "3b", "30,000 PfSPZ x 4", "8", "1",
-                                 "", "4a", "135,000 PfSPZ x 5", "0", "2",
-                                 "", "4b", "135,000 PfSPZ x 5", "0", "4",
-                                 "", "4c", "135,000 PfSPZ x 4", "3", "6",
-                                 "", "All", "", "14", "13",
-                                 "VRC 314", "1", "270,000 PfSPZ x 3", "1", "3",
-                                 "", "2", "270,000 PfSPZ x 4", "0", "5",
-                                 "", "4", "270,000 PfSPZ x 4", "5", "6",
-                                 "", "5", "900,000 PfSPZ x 3", "5", "9",
-                                 "", "All", "", "11", "23",
-                                 "BSPZV1", "2", "135,000 PfSPZ x 5", "7", "4", 
-                                 "", "3", "270,000 PfSPZ x 5", "7", "4",
-                                 "", "All", "", "14", "8"),
-                               nrow = 15, byrow = T))
+study_tab <- data.frame(matrix(c("VRC 312", "3a", "30,000 PfSPZ x 6", "3", "0",
+                           "", "3b", "30,000 PfSPZ x 4", "8", "1",
+                           "", "4a", "135,000 PfSPZ x 5", "0", "2",
+                           "", "4b", "135,000 PfSPZ x 5", "0", "4",
+                           "", "4c", "135,000 PfSPZ x 4", "3", "6",
+                           "", "All", "", "14", "13",
+                           "VRC 314", "1", "270,000 PfSPZ x 3", "1", "3",
+                           "", "2", "270,000 PfSPZ x 4", "0", "5",
+                           "", "4", "270,000 PfSPZ x 4", "5", "6",
+                           "", "5", "900,000 PfSPZ x 3", "5", "9",
+                           "", "All", "", "11", "23",
+                          "BSPZV1", "2", "135,000 PfSPZ x 5", "7", "4", 
+                          "", "3", "270,000 PfSPZ x 5", "7", "4",
+                          "", "All", "", "14", "8"),
+                          nrow = 14, byrow = T))
 colnames(study_tab) <- c("Study", "Group","Regimen","Not Protected","Protected")
 #for the Neal et al study (PMID 35031601), 3 subjects in BSPZV1 group 1who were smear negative throughout but PCR positive were considered protected
 
@@ -879,7 +878,7 @@ TopPlot <- GSEA_KPSZV1_VRC312_VRC314_BPSZV1 %>%
         strip.text = element_text(size=5.5),
         legend.position = "right",
         axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
-    theme(plot.margin = unit(c(1, 0.5, 1, 0.5), "cm")) +
+    theme(plot.margin = unit(c(1, 0.3, 1, 0.3), "cm")) +
 facet_wrap(~module_type, scales = "free_y", ncol =2)
 
 TopPlot <- ggarrange(study_tab_plot ,addSmallLegend(TopPlot), widths = c(1,1))
@@ -900,7 +899,7 @@ Bottom_Left_Plot <- GSEA_KPSZV1_VRC312_VRC314_BPSZV1 %>%
         strip.background = element_blank(),
         legend.position = "right",
         axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
-    theme(plot.margin = unit(c(1, 0.5, 5, 0.5), "cm")) +
+    theme(plot.margin = unit(c(1, 0.45, 5, 0.45), "cm")) +
 facet_wrap(~module_type, scales = "free_y", nrow =2)
 
 Bottom_Middle_Plot <- GSEA_KPSZV1_VRC312_VRC314_BPSZV1 %>%
@@ -919,7 +918,7 @@ Bottom_Middle_Plot <- GSEA_KPSZV1_VRC312_VRC314_BPSZV1 %>%
         strip.background = element_blank(),
         legend.position = "right",
         axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
-    theme(plot.margin = unit(c(1, 0.75, 10, 0.75), "cm")) +
+    theme(plot.margin = unit(c(1, 0.7, 15, 0.7), "cm")) +
 facet_wrap(~module_type, scales = "free_y", nrow =2)
 
 
@@ -960,7 +959,7 @@ ggarrange(addSmallLegend(TopPlot), bottom_panels, common.legend = TRUE, nrow = 2
 ```
 
 ```{r save gsea plots, echo=FALSE, eval=FALSE, include=FALSE}
-cairo_pdf(file = paste0(figdir, "Fig_S4_GSEA_VRC312_VRC314_BSPZV1_FDR", fdr_threshold*100,".pdf"), height = 15, width = 12)
+pdf(file = paste0(figdir, "Fig_S4B_GSEA_VRC312_VRC314_BSPZV1_FDR", fdr_threshold*100,".pdf"), height = 15, width = 12)
 ggarrange(addSmallLegend(TopPlot), bottom_panels, common.legend = TRUE, nrow = 2, heights = c(1,3))
 dev.off()
 ```
