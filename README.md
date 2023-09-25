@@ -17,7 +17,7 @@ Code for systems analysis of KSPZV1 malaria vaccine trial.
 
 ## Weighted gene correlation network analyses
 
-[WGCNA, pre-immunization baseline](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-WGCNA-Baseline.html)
+[WGCNA, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1/html/KSPZV1-WGCNA-Baseline-JCI-revision.html) 
 
 [WGCNA, Δ (post-vax/baseline)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-WGCNA-Delta-Postvax.html)
 
