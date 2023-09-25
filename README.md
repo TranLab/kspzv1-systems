@@ -1,7 +1,6 @@
 # kspzv1-systems-analysis
 Code for systems analysis of KSPZV1 malaria vaccine trial.
 
-<<<<<<< HEAD
 ## Supervised clustering
 
 [PC-LDA supervised clustering, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-PCA-LDA-Plots-Baseline-Revision.html)
