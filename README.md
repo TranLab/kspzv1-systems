@@ -21,6 +21,16 @@ Code for systems analysis of KSPZV1 malaria vaccine trial.
 
 [WGCNA, Δ (post-vax/baseline)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-WGCNA-Delta-Postvax.html)
 
+## Machine learning (class prediction)
+
+[Figures 6B, S7A, XGBoost, 1.8x10^6 PfSPZ, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KPSZV1-Baseline-Highdose-PfSPZ-Multimodal-ML-Revised-TMT-plot-ROC-SHAP-from-CV-data-JCI-Revision.html) 
+
+[Figures 6C, S7B, XGBoost, 1.8x10^6 PfSPZ, post-vaccination (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KPSZV1-Postvax-Highdose-PfSPZ-Multimodal-ML-plot-ROC-SHAP-from-CV-data-JCI-Revision.html) 
+
+[Figures 6D, S7C, XGBoost, 1.8x10^6 PfSPZ, delta (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KPSZV1-Delta-Highdose-PfSPZ-Multimodal-ML-plot-ROC-SHAP-from-CV-data-JCI-Revision.html) 
+
+[Figures 6E, S7D, XGBoost, Placebo, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KPSZV1-Baseline-Placebo-Multimodal-ML-Revised-TMT-plot-ROC-SHAP-from-CV-data-JCI-Revision.html) 
+
 ## Correlations and chord diagrams
 
 [Correlation between cellular and CSP-specific response features and time-to-first parasitemia through 6 month surveillance](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-Correlate-Cellular-and-CSP-IgG-Features-to-TTE-6-months.html)
