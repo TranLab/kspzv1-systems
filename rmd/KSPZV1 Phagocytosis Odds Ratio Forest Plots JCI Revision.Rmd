@@ -1,0 +1,459 @@
+---
+title: "KSPZ1 Phagocytosis OR Forest Plots and Activation Markers"
+author: "Tuan M. Tran"
+date: "10/12/2023"
+output: html_document
+---
+
+```{r setup, include=TRUE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(googledrive)
+```
+
+### Odds ratios of phagocytosis of various pre-treatments relative to controls (media only, isotype, mock treatment, etc.)
+
+```{r load the data, eval=FALSE, include=FALSE, echo=FALSE}
+#Notes: The tabulation of number of experiments (n_experiments) has a bug. It incorrectly calculates the number of experiments as 1 for treatment types.
+
+myPath <- "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/"
+## read in the most recent count data
+# temp <- tempfile(fileext = ".rds")
+# dl <- drive_download(
+#   as_id("1wdDk3JMQhxQTANKH2TtBMkKZXHJGogFz"), path = temp, overwrite = TRUE)
+# 
+# countdat <- readRDS(dl$local_path)
+countdat <- readRDS(paste0(myPath,"PfSPZ phagocytosis Count dataframe Aditi 07122022.rds"))
+```
+
+```{r data processing, eval=FALSE, include=FALSE, echo=FALSE}
+#exclude control and setup experiments
+exclude <- c("Mono+cryo PfSPZ_PfCSP2A10_Unst Mono+Isotype-PfSpz", "Mono+cryo PfSPZ_PfCSP2A10_Unst Mono+L9LS-PfSpz","Mono+cryo PfSPZ_PfCSP2A10_LPS st_Mono+Isotype-Pfspz","Mono+cryo PfSPZ_PfCSP2A10_LPS st_Mono+L9LS-Pfspz","Mono+cryo PfSPZ_PfCSP2A10_LPS st_Mono+Pfspz","Mono+cryo PfSPZ_PfCSP2A10_Flagellin st_Mono+Pfspz")
+
+propdat <- countdat %>%
+  filter(Exp_type %in% c("Mono+cryo Pfspz_PfCSP2A10","Mono + Cryo Pfspz","THP-1 + Cryo PfSPZ")) %>%
+  mutate(Exp_type = gsub("Pfspz","PfSPZ",Exp_type)) %>%
+  mutate(Exp_type_group = paste0(Exp_type,"_",group)) %>%
+  filter(!Exp_type_group %in% exclude) %>%
+  mutate(Exp_type = ifelse(Exp_type == "Mono+cryo PfSPZ_PfCSP2A10","Mono + Cryo PfSPZ", Exp_type)) %>%
+  mutate(Treatment =ifelse(Treatment == "Unstimulated", "vehicle", Treatment)) %>%
+  mutate(Treatment =ifelse(group == "Unst Mono+PfSpz", "vehicle", Treatment)) %>%
+  mutate(Treatment = ifelse(group == "Unst Mono+L9LS-PfSpz","unst + L9LS", Treatment)) %>%
+  mutate(Treatment = ifelse(group == "Unst Mono+Isotype-PySpz","unst + Isotype", Treatment)) %>%
+  mutate(Treatment = ifelse(group == "Unst Mono+Isotype-PfSpz","unst + Isotype", Treatment)) %>%
+  mutate(Treatment = ifelse(group == "LPS st_Mono+Pfspz","LPS",Treatment)) %>%
+  mutate(Treatment = ifelse(group =="LPS st_Mono+Isotype-Pfspz","LPS + Isotype",Treatment )) %>%
+  mutate(Treatment = ifelse(group == "LPS st_Mono+L9LS-Pfspz" , "LPS + L9LS", Treatment)) %>%
+ mutate(Treatment = gsub("Flagellin", "flagellin", Treatment)) %>%
+  mutate(Treatment = gsub("Poly IC", "poly I:C", Treatment)) %>%
+  mutate(Treatment = gsub("IMIQ", "imiquimod", Treatment)) %>%
+  mutate(Treatment = gsub("B-glucan", "beta-glucan", Treatment)) %>%
+  filter(Gate %in% c("Hoechst+Py+Total", "Hoechst+Py+Internal", "Hoechst+Py+External", "Hoechst+","Hoechst+Py-","Hoechst+Py-+External"))%>% 
+  mutate(Count = as.numeric(Count)) %>%
+   mutate(Treatment = ifelse(Exp_type_group == "Mono + Cryo PfSPZ_Unst Mono+PfSpz","vehicle6",Treatment)) %>%
+   mutate(Treatment = ifelse(Exp_type_group == "Mono+cryo PfSPZ_PfCSP2A10_Unst Mono+PfSpz","vehicle4",Treatment)) %>%
+  filter(Gate %in% c("Hoechst+Py+Total", "Hoechst+Py+Internal", "Hoechst+Py+External","Hoechst+","Hoechst+Py-","Hoechst+Py-+External"))  %>%
+  mutate(Count = as.numeric(Count)) %>%
+ #  dplyr::select(-c(group)) %>%
+  group_by(Exp_type, Exp_no, Treatment, Gate) %>%
+  summarise(Count = sum(Count)) %>%
+  ungroup() %>%
+  droplevels()
+```
+
+```{r fetdat,print forest plot, eval=FALSE, include=FALSE, echo=FALSE}
+fetdat <- df <- temp <-  tempdat <- mydat <- mydat_bound <- fetres <- Exp_annot <- contigency_tab <- c()
+#propdat$Exp_no <- as.numeric(propdat$Exp_no)
+for(i in c("THP-1 + Cryo PfSPZ","Mono + Cryo PfSPZ")){
+      tempdat[[i]] <- propdat[propdat$Exp_type == i,] %>%
+      droplevels
+  for(j in unique(tempdat[[i]]$Treatment)){
+      mydat[[i]][[j]] <- propdat[propdat$Exp_type == i & propdat$Treatment == j,] %>%
+      mutate(Experiments = paste(unique(Exp_no), collapse = ",")) %>%
+      mutate(n_Experiments = length(unique(Exp_no)))
+       mydat_bound[[i]] <- bind_rows(mydat[[i]]) %>%
+      ungroup() %>%
+      droplevels()
+  }}
+
+
+for(i in c("THP-1 + Cryo PfSPZ","Mono + Cryo PfSPZ")){
+for(j in c("unst + L9LS","LPS","LPS + L9LS", "flagellin","beta-glucan", "poly I:C", "imiquimod","CpG")){
+      
+      df[[i]] <- mydat_bound[[i]] %>%
+        as.data.frame() 
+      
+      
+## following if-else sequences sets references         
+        if (i == "Mono + Cryo PfSPZ" & j == "unst + L9LS")
+                temp[[i]][[j]] <- df[[i]] %>%
+                   as.data.frame() %>%
+                    filter(`Treatment` %in% c("unst + Isotype",j)) %>%
+                   group_by(Exp_type, Exp_no, Treatment, Gate, Experiments, n_Experiments) %>%
+                  summarise(Count = sum(Count)) %>%
+                   ungroup() %>%
+                    #arrange(desc(Treatment))%>%
+                  droplevels()
+        
+ ### LPS and Flagellin compairing with vehicle from 6th experiment       
+        else if (i == "Mono + Cryo PfSPZ" & j %in% c("LPS","flagellin"))
+           temp[[i]][[j]] <- df[[i]] %>%
+              as.data.frame() %>%
+              filter (Treatment %in% c( "vehicle6",j)) %>%
+                   group_by(Exp_type, Exp_no, Treatment, Gate, Experiments, n_Experiments) %>%
+                  summarise(Count = sum(Count)) %>%
+                   ungroup() %>%
+                   #arrange(desc(Treatment))%>%
+                  droplevels()
+        
+  ### TLRs compairing with vehicle from 4th experiment         
+        else if (i == "Mono + Cryo PfSPZ" & j %in% c("beta-glucan", "poly I:C", "imiquimod","CpG"))
+           temp[[i]][[j]] <- df[[i]] %>%
+              as.data.frame() %>%
+              filter (Treatment %in% c( "vehicle4",j)) %>%
+                   group_by(Exp_type, Exp_no, Treatment, Gate, Experiments, n_Experiments) %>%
+                  summarise(Count = sum(Count)) %>%
+                   ungroup() %>%
+                   #arrange(desc(Treatment))%>%
+                  droplevels()
+        
+
+         else if (i == "Mono + Cryo PfSPZ" & j == "LPS + L9LS")
+           temp[[i]][[j]] <- df[[i]] %>%
+              as.data.frame() %>%
+              filter (Treatment %in% c( "LPS + Isotype",j)) %>%
+                   group_by(Exp_type, Exp_no, Treatment, Gate, Experiments, n_Experiments) %>%
+                  summarise(Count = sum(Count)) %>%
+                   ungroup() %>%
+                   #arrange(desc(Treatment))%>%
+                  droplevels()
+
+          else (
+            temp[[i]][[j]] <- df[[i]] %>%
+              as.data.frame() %>%
+              filter(`Treatment` %in% c(j,"vehicle")) %>%
+              group_by(Exp_type, Exp_no, Treatment, Gate, Experiments, n_Experiments)%>%
+              summarise(Count = sum(Count)) %>%
+              arrange(desc(Treatment))%>%
+               ungroup() %>%
+              droplevels())
+    
+    Exp_annot[[i]][[j]]  <- bind_rows(temp[[i]][[j]]) %>%
+    dplyr::select(Treatment, Experiments, n_Experiments) %>%
+    filter(Treatment == j) %>%
+    distinct(Treatment, .keep_all = TRUE)
+    
+### following if statements removes unnecessary comparisons.
+    
+    if(i %in% c("THP-1 + Cryo PfSPZ") & j %in% c("unst + L9LS","LPS + L9LS","beta-glucan", "poly I:C", "imiquimod","CpG"))
+    {
+       temp [[i]] [[j]] = NULL
+       Exp_annot[[i]][[j]] = NULL
+    }   
+  
+    
+}}
+### fliping internal vs external cols-- a way to re-level vehicle and TLR agonists during the calculations
+
+for (i in c("THP-1 + Cryo PfSPZ")){
+  for (j in c("LPS", "flagellin")) {
+   # contigency_tab[[i]][[j]] <- xtabs(Count ~ Treatment+Gate, data=temp[[i]][[j]])[,c("Hoechst+Py-+External","Hoechst+Py+Internal")]
+    fetres[[i]][[j]] <- fisher.test(xtabs(Count ~ Treatment+Gate, data=temp[[i]][[j]])[,c("Hoechst+Py+Internal","Hoechst+Py-+External")])
+fetdat[[i]][[j]] <- data.frame("OR" = fetres[[i]][[j]]$estimate, "LCI" = fetres[[i]][[j]]$conf.int[1], "UCI" = fetres[[i]][[j]]$conf.int[2], "p" = fetres[[i]][[j]]$p.value)
+  }}
+
+for (i in c("Mono + Cryo PfSPZ")){
+  for (j in c("unst + L9LS","LPS + L9LS")) {
+    #contigency_tab[[i]][[j]] <- xtabs(Count ~ Treatment+Gate, data=temp[[i]][[j]])[,c("Hoechst+Py-+External","Hoechst+Py+Internal")]
+    fetres[[i]][[j]] <- fisher.test(xtabs(Count ~ Treatment+Gate, data=temp[[i]][[j]])[,c("Hoechst+Py-+External","Hoechst+Py+Internal")])
+fetdat[[i]][[j]] <- data.frame("OR" = fetres[[i]][[j]]$estimate, "LCI" = fetres[[i]][[j]]$conf.int[1], "UCI" = fetres[[i]][[j]]$conf.int[2], "p" = fetres[[i]][[j]]$p.value)
+  }}
+
+
+for (i in c("Mono + Cryo PfSPZ")){
+  for (j in c("beta-glucan","LPS", "poly I:C", "flagellin", "imiquimod","CpG")) {
+    #contigency_tab[[i]][[j]] <- xtabs(Count ~ Treatment+Gate, data=temp[[i]][[j]])[,c("Hoechst+Py-+External","Hoechst+Py+Internal")]
+    fetres[[i]][[j]] <- fisher.test(xtabs(Count ~ Treatment+Gate, data=temp[[i]][[j]])[,c("Hoechst+Py+Internal","Hoechst+Py-+External")])
+fetdat[[i]][[j]] <- data.frame("OR" = fetres[[i]][[j]]$estimate, "LCI" = fetres[[i]][[j]]$conf.int[1], "UCI" = fetres[[i]][[j]]$conf.int[2], "p" = fetres[[i]][[j]]$p.value)
+  }}
+
+all_annots <- unlist(Exp_annot, recursive = FALSE) %>%
+          do.call("rbind",.) %>%
+          rownames_to_column(var = "Experiment.Treatment")%>%
+          mutate(Experiment_type = gsub("\\..*","",Experiment.Treatment))
+
+allfets <- unlist(fetdat, recursive = FALSE) %>%
+                do.call("rbind",.) %>% 
+                rownames_to_column(var = "Experiment.Treatment") %>%
+                as_tibble() %>%
+                mutate(BH.adj.p = p.adjust(.$p, n = nrow(.))) %>%
+                right_join(., all_annots, by = "Experiment.Treatment") %>%
+                mutate(Treatment = gsub("beta", "β", Treatment)) %>%
+                mutate(Treatment = gsub("unst","vehicle", Treatment)) %>%
+                mutate(label = Treatment) %>%
+                mutate(label = ifelse(n_Experiments > 1,paste0(label," (",n_Experiments,")"),label))%>%
+                mutate(plot_type = ifelse(Treatment == "vehicle + L9LS" ,"Mono + Cryo PfSPZ L9LS only", Experiment_type)) %>%
+                mutate(plot_type = ifelse(Treatment == "LPS + L9LS" ,"Mono + Cryo PfSPZ L9LS only", plot_type)) %>%
+                mutate(plot_type = ifelse(Treatment == "vehicle + RAM1","Mono + Cryo PySPZ RAM only",plot_type)) %>%
+                 mutate(plot_type = ifelse(Treatment == "LPS + RAM1","Mono + Cryo PySPZ RAM only",plot_type)) %>%
+                dplyr::select(-c(Experiment.Treatment)) %>%
+                dplyr::select(c(9,6,1:5,7,8,10,11)) %>%
+                as.data.frame()
+
+allfets$plot_type <- factor(allfets$plot_type, levels= c("Mono + Cryo PfSPZ L9LS only","Mono + Cryo PfSPZ","THP-1 + Cryo PfSPZ"))
+
+
+allfets$Treatment <- factor(allfets$Treatment, levels = c("vehicle + L9LS","LPS + L9LS","poly I:C","CpG","imiquimod","β-glucan","flagellin","LPS"))
+
+allfets$label <- factor(allfets$label, levels = c("vehicle + L9LS","LPS + L9LS","poly I:C","CpG","imiquimod","β-glucan","flagellin","LPS"))
+
+#cairo_pdf(paste0(myPath,"KSPZV1 phagocytosis analysis PfSPZ & PySPZ Py+Internal vs Py-+External 06292022.pdf"), width = 4, height = 4)
+```
+
+```{r load reviewer response data, eval=FALSE, include=FALSE, echo=FALSE}
+## Add additional ORs from reviewer requested experiments
+#Get data from experiments performed in response to JCI reviewer critiques
+
+tempdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/KSPZV1_JCI revision_JB/Final data from all Mono and Pfspz experiments/"
+newdat_exp1 <- readxl::read_excel(paste0(tempdir,"Table6_All cell type_phagocytosis_All exp.xlsx"), sheet = "Exp1") %>%
+  mutate(experiment = 1)
+newdat_exp2 <- readxl::read_excel(paste0(tempdir,"Table6_All cell type_phagocytosis_All exp.xlsx"), sheet = "Exp2") %>%
+  mutate(experiment = 2)
+newdat_exp3 <- readxl::read_excel(paste0(tempdir,"Table6_All cell type_phagocytosis_All exp.xlsx"), sheet = "Exp3") %>%
+  mutate(experiment = 3)
+newdat <- bind_rows(newdat_exp1, newdat_exp2, newdat_exp3)
+```
+
+```{r filter summarize and arrange, eval=FALSE, include=FALSE, echo=FALSE}
+#Summarize experiments and calculate FET and odds ratios.
+spz_pretreat_dat <- newdat %>%
+  filter(Treatment %in% c("mock 1°, 2°Pfspz", "1° and 2°Pfspz")) %>%
+  dplyr::select(experiment, Treatment,`Cell type`, `Cell count`, `Count(PfCSP2A10pos)`, `Count(PfCSP2A10pos CFSEneg)`) %>%
+  mutate(PfSPZ_neg = `Cell count`-`Count(PfCSP2A10pos CFSEneg)`) %>%
+  dplyr::rename(PfSPZ_pos = `Count(PfCSP2A10pos CFSEneg)`)  %>%
+  dplyr::select(experiment, Treatment,`Cell type`, PfSPZ_neg, PfSPZ_pos) %>%
+  dplyr::select(-experiment) %>%
+  group_by(Treatment, `Cell type`) %>%
+  dplyr::summarise(PfSPZ_neg = sum(PfSPZ_neg), PfSPZ_pos = sum(PfSPZ_pos)) %>%
+  filter(`Cell type` == "Total CD14+") %>%
+  dplyr::select(-c(`Cell type`)) %>%
+  arrange(desc(Treatment)) %>% #make mock reference
+  column_to_rownames(var = "Treatment")
+spz_pretreat_fetres <- fisher.test(spz_pretreat_dat)
+spz_pretreat_res_df <- data.frame("Experiment_type" = "fresh mono + Cryo PfSPZ",
+                                  "Treatment" = "PfSPZ",
+                                  "OR" = signif(spz_pretreat_fetres$estimate),
+                                  "LCI" = spz_pretreat_fetres$conf.int[1],
+                                  "UCI" = spz_pretreat_fetres$conf.int[2],
+                                  "p" = spz_pretreat_fetres$p.value,
+                                  "BH.adj.p" = spz_pretreat_fetres$p.value, #only one comparison
+                                  "Experiments" = "3",
+                                  "n_Experiments" = 1,
+                                  "label" = "PfSPZ*",
+                                  "plot_type" = "Mono + Cryo PfSPZ fresh cells")
+```
+
+```{r bind to allfests, eval=FALSE, include=FALSE, echo=FALSE}
+#Bind new data to allfets
+allfets_plus_new <- bind_rows(allfets, spz_pretreat_res_df) %>%
+  dplyr::select(plot_type, Treatment, label, OR, LCI, UCI, p, BH.adj.p)
+```
+
+```{r save allfets_plus_new, eval=FALSE, include=FALSE, echo=FALSE}
+saveRDS(allfets_plus_new, paste0(myPath, "KSPZV1_phagocytosis_allfets_plus_new.rds"))
+```
+
+```{r load data local, eval=FALSE, include=FALSE, echo=FALSE}
+allfets_plus_new <- read_rds(paste0(myPath, "KSPZV1_phagocytosis_allfets_plus_new.rds"))
+```
+
+Download data from googledrive.
+
+```{r load data googledrive, message=FALSE, warning=FALSE}
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("108OYZ9n9c70vWEM2Y9uZ_jvB1iSpgVPR"), path = temp, overwrite = TRUE)
+allfets_plus_new <- readRDS(dl$local_path)
+```
+
+Make THP-1 OR forest plot from data
+
+```{r plot forest plot thp, echo = TRUE, fig.align='center'}
+thp.plot <- allfets_plus_new %>%
+  filter(plot_type %in% c("THP-1 + Cryo PfSPZ"))%>%
+  mutate(label = fct_relevel(label)) %>%
+  mutate(Treatment = fct_relevel(Treatment)) %>%
+  ggplot(aes(y=label, x=OR)) +
+  geom_point(size=1, shape=19) +
+  geom_errorbarh(aes(xmin=LCI, xmax=UCI), height=.3) +
+  #coord_fixed(ratio= 0.8)+
+  geom_vline(xintercept=1, linetype='longdash') +
+  ylab("") +
+  xlab("") +
+  #ggtitle("THP1 monocytes + purified PfSPZ")+
+  theme_bw() +
+  theme(plot.title = element_text(size= 11), text = element_text(family = "Helvetica"),
+        axis.text.x = element_blank(),
+        axis.ticks = element_blank()) +
+  theme(plot.margin = margin(0,0,0,0, 'cm')) +
+  xlim(0,7)
+```
+
+Make TLR agonist and beta-glucan forest plot from data
+
+```{r plot forest plot mono, echo = TRUE, fig.align='center', warning=FALSE, message=FALSE}
+alltreat.plot <- allfets_plus_new %>%
+  filter(plot_type %in% c("Mono + Cryo PfSPZ"))%>%
+  mutate(label = fct_reorder(label, OR, .desc=TRUE)) %>%
+  mutate(Treatment = fct_reorder(Treatment, OR, .desc=TRUE)) %>%
+  ggplot(aes(y=label, x=OR)) +
+  geom_point(size=1, shape=19) +
+  geom_errorbarh(aes(xmin=LCI, xmax=UCI), height=.3) +
+  #coord_fixed(ratio=0.3) +
+  geom_vline(xintercept=1, linetype='longdash') +
+  ylab("pre-treatment") +
+  xlab("")  +
+  #ggtitle("primary monocytes + purified PfSPZ")+
+  theme_bw() +
+  theme(plot.title = element_text(size= 11), text = element_text(family = "Helvetica"),
+        axis.text.x = element_blank(),
+        axis.ticks = element_blank()) +
+  theme(plot.margin = margin(0,0,0,0, 'cm')) +
+  xlim(0,7)
+```
+
+Make L9LS control OR forest plot from data
+
+```{r plot forest plot L9LS, echo = TRUE, fig.align='center', warning=FALSE, message=FALSE}
+L9LS.plot <- allfets_plus_new %>%
+  filter(plot_type %in% c("Mono + Cryo PfSPZ L9LS only"))%>%
+  mutate(label = fct_relevel(label)) %>%
+  mutate(Treatment = fct_relevel(Treatment)) %>%
+  ggplot(aes(y=label, x=OR)) +
+  geom_point(size=1, shape=19) +
+  geom_errorbarh(aes(xmin=LCI, xmax=UCI), height=.3) +
+  #coord_fixed(ratio= 0.3) +
+  geom_vline(xintercept=1, linetype='longdash') +
+  ylab("") +
+  xlab("Odds Ratio") +
+ #ggtitle("H   Mono + Cryo PfSPZ L9LS only")+
+  theme_bw() +
+  theme(plot.title = element_text(size= 11), text = element_text(family = "Helvetica"))+
+  theme(plot.margin = margin(0,0,0,0, 'cm')) +
+  xlim(0,7)
+```
+
+Make PfSPZ pretreatment OR forest plot from data
+
+```{r plot forest plot pfspz pretreat, echo = TRUE, fig.align='center', warning=FALSE, message=FALSE, fig.width=8, fig.height=2}
+PfSPZ_pretreat_plot <- allfets_plus_new %>%
+  filter(plot_type %in% c("Mono + Cryo PfSPZ fresh cells"))%>%
+  mutate(label = fct_relevel(label)) %>%
+  mutate(Treatment = fct_relevel(Treatment)) %>%
+  ggplot(aes(y=label, x=OR)) +
+  geom_point(size=1, shape=19) +
+  geom_errorbarh(aes(xmin=LCI, xmax=UCI), height=.3) +
+  #coord_fixed(ratio= 0.3) +
+  geom_vline(xintercept=1, linetype='longdash') +
+  ylab("") +
+  xlab("") +
+ #ggtitle("H   Mono + Cryo PfSPZ PfSPZ_pretreat_plot")+
+  theme_bw() +
+  theme(plot.title = element_text(size= 11), text = element_text(family = "Helvetica"),
+        axis.text.x = element_blank(),
+        axis.ticks = element_blank()) +
+  theme(plot.margin = margin(0,0,0,0, 'cm')) +
+  xlim(0,7)
+```
+
+Use ggarrange to arrange all forest plots into one
+
+```{r gg arrange the plots, echo = TRUE, warning=FALSE,message=FALSE, fig.align='center', fig.width=4, fig.height=5}
+fig_7F <- ggarrange(thp.plot,
+                   alltreat.plot,
+                   PfSPZ_pretreat_plot,
+                   L9LS.plot, align = "v",
+                   nrow = 4,
+                   heights = c(2.2,5,1.6,2.5))
+
+fig_7F
+```
+
+```{r save Fig 7F, echo=FALSE, eval=FALSE, include=FALSE}
+tempdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/"
+cairo_pdf(paste0(tempdir,"Fig 7F Phagocytosis Odds Ratio Forest Plot with PfSPZ pretreatment JCI revision.pdf"), height = 3.2, width = 4)
+fig_7F
+dev.off()
+```
+
+### Effect of purified PfSPZ pre-treatment on PfSPZ phagocytosis by freshly isolate human monocytes
+
+```{r read in local data}
+tempdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/KSPZV1_JCI revision_JB/Final data from all Mono and Pfspz experiments/"
+tab8_exp1 <- readxl::read_excel(paste0(tempdir,
+                                       "Experiment 1/Table8_Pheno data selected gp and markers_Exp1.xlsx"),
+                                sheet = "Total CD14+")
+tab8_exp2 <- readxl::read_excel(paste0(tempdir,
+                                       "Experiment 2/Table8_Pheno data_selected gp and markers_Exp2.xlsx"),
+                                sheet = "Total CD14+")
+tab8_exp3 <- readxl::read_excel(paste0(tempdir,
+                                       "Experiment 3/Table8_Pheno data_selected gp and markers_Exp3.xlsx"),
+                                sheet = "Total CD14+")
+all_facs_tabs <- bind_rows(tab8_exp1, tab8_exp2, tab8_exp3) %>%
+  drop_na(Treatment)
+```
+
+### Compare media only with single PfSPZ treatment (no secondary PfSPZ)
+
+```{r media only with single PfSPZ, fig.align='center', fig.height=6, fig.width=8}
+single_PfSPZ_MFI_plot_exp1 <- all_facs_tabs %>%
+  filter(Experiment != "Exp3") %>%
+  filter(Markers != "CD86") %>%
+  filter(Treatment %in% c("media only", "1° Pfspz, no 2°Pfspz")) %>%
+  mutate(Treatment = factor(Treatment, levels = c("media only", "1° Pfspz, no 2°Pfspz"))) %>%
+  ggplot(., aes(x = Treatment, y = MFI)) +
+  geom_point() +
+  stat_summary(fun = mean, color = "red", position = position_dodge(0.75),
+               geom = "pointrange",
+               shape = 3,
+               show.legend = FALSE) +
+  stat_compare_means(aes(label = paste0("p = ", after_stat(p.format))),
+                     method = "t.test",
+                     label.x = 1.25) +
+  theme_bw() +
+  ggh4x::facet_grid2(c("Experiment", "Markers"),
+              labeller = "label_value",
+              scales = "free",
+              independent = "all") +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.15)))
+
+single_PfSPZ_MFI_plot_exp1 
+```
+
+
+```{r pretreat PfSPZ, fig.align='center', fig.height=6, fig.width=8}
+pretreat_PfSPZ_MFI_plot_exp1 <- all_facs_tabs %>%
+  filter(Experiment != "Exp3") %>%
+  filter(Markers != "CD86") %>%
+  filter(Treatment %in% c("mock 1°, 2°Pfspz", "1° and 2°Pfspz")) %>%
+  mutate(Treatment = factor(Treatment, levels = c("mock 1°, 2°Pfspz", "1° and 2°Pfspz"))) %>%
+  ggplot(., aes(x = Treatment, y = MFI)) +
+  geom_point() +
+  stat_summary(fun = mean, color = "red", position = position_dodge(0.75),
+               geom = "pointrange",
+               shape = 3,
+               show.legend = FALSE) +
+  stat_compare_means(aes(label = paste0("p = ", after_stat(p.format))),
+                     method = "t.test",
+                     label.x = 1.25) +
+  theme_bw() +
+  ggh4x::facet_grid2(c("Experiment", "Markers"),
+              labeller = "label_value",
+              scales = "free",
+              independent = "all") +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.15)))
+
+pretreat_PfSPZ_MFI_plot_exp1 
+```

@@ -367,10 +367,10 @@ data from the KSPZV1 clinical trial.</p>
 <a href="https://horvath.genetics.ucla.edu/html/CoexpressionNetwork/JMiller/Tutorial%20document.pdf" class="uri">https://horvath.genetics.ucla.edu/html/CoexpressionNetwork/JMiller/Tutorial%20document.pdf</a></p>
 <p>Reviewer requested that we provide scatter plots for the correlations
 between modules and phenotypes. Review of the original code revealed
-that using pearson or spearman’s correlation to assess the relationship
-between modules and binary traits was not appropriate. Thus, we
-performed limma (empirical Bayes moderated t test) and presented
-differences as beeswarm plots with mean and 95%CI.</p>
+that using Pearson’s or Spearman’s correlation to assess the
+relationship between modules and binary traits was not appropriate.
+Thus, we performed limma (empirical Bayes moderated t test) and
+presented differences as beeswarm plots with mean and 95%CI.</p>
 </div>
 <div id="load-packages" class="section level3">
 <h3>Load packages</h3>
@@ -1524,10 +1524,10 @@ graph &lt;- wgcna2igraph(net = net, WGCNA_matrix, modules2plot = myColors,
 <pre class="r"><code>hubscores &lt;- hub_score(graph, scale = TRUE, weights = NULL,
   options = arpack_defaults)</code></pre>
 </div>
-<div id="plot-individual-scatter-plots-for-significant-module-trait-relationships" class="section level3">
-<h3>Plot individual scatter plots for significant module-trait
+<div id="plot-individual-beeswarmplot-plots-for-significant-module-trait-relationships" class="section level3">
+<h3>Plot individual beeswarmplot plots for significant module-trait
 relationships</h3>
-<pre class="r"><code>scatplot_dat &lt;- orderMEs(net$MEs) %&gt;% 
+<pre class="r"><code>beeswarmplot_dat &lt;- orderMEs(net$MEs) %&gt;% 
   dplyr::select(rownames(modTraitCor.select)) %&gt;%
   rownames_to_column(var = &quot;subject&quot;) %&gt;%
   mutate(subject = gsub(&quot;\\_0&quot;, &quot;&quot;, subject)) %&gt;%
@@ -1542,7 +1542,7 @@ relationships</h3>
   mutate(module = gsub(&quot;MElavenderblush2&quot;, &quot;EFHD2&quot;, module))</code></pre>
 <pre class="r"><code>library(tidyverse)
 library(broom)
-scatplot_dat_factor &lt;- scatplot_dat %&gt;%
+beeswarmplot_dat_factor &lt;- beeswarmplot_dat %&gt;%
   pivot_longer(cols = c(&quot;Pf infection at first vax&quot;:&quot;uninfected, 3 months&quot;), names_to = &quot;trait&quot;, values_to = &quot;value&quot;)  %&gt;%
   filter(module %in% p_vs_np_3mos_select$hub_gene) %&gt;%
   mutate(trait = factor(trait, levels = c(&quot;Pf infection at first vax&quot;,
@@ -1550,7 +1550,7 @@ scatplot_dat_factor &lt;- scatplot_dat %&gt;%
                                           &quot;uninfected, 3 months&quot;,
                                           &quot;fold-change anti-CSP IgG&quot;)))
 
-scatplot_dat_factor_norm_test &lt;- scatplot_dat_factor %&gt;%
+beeswarmplot_dat_factor_norm_test &lt;- beeswarmplot_dat_factor %&gt;%
   group_by(module, trait, value)%&gt;% 
   do(tidy(shapiro.test(.$MEs))) %&gt;% 
   ungroup() %&gt;%
@@ -1558,7 +1558,7 @@ scatplot_dat_factor_norm_test &lt;- scatplot_dat_factor %&gt;%
   mutate(is_normal = ifelse(p.value&lt;0.05, &quot;no&quot;,&quot;yes&quot;))
   
 
-scatplot_dat_factor_n &lt;- scatplot_dat_factor %&gt;%
+beeswarmplot_dat_factor_n &lt;- beeswarmplot_dat_factor %&gt;%
   group_by(module, trait, value) %&gt;%
   summarise(n = n())</code></pre>
 <pre><code>## `summarise()` has grouped output by &#39;module&#39;, &#39;trait&#39;. You can override using
@@ -1571,7 +1571,7 @@ scatplot_dat_factor_n &lt;- scatplot_dat_factor %&gt;%
   return(c(y=m,ymin=ymin,ymax=ymax))
 }
 
-all_scat_plot &lt;- scatplot_dat_factor %&gt;%
+all_beeswarm_plot &lt;- beeswarmplot_dat_factor %&gt;%
   ggplot(., aes(x=value, y=MEs)) +
   ggbeeswarm::geom_beeswarm(alpha = 0.5, color = &quot;lightblue&quot;) +
   stat_summary(fun=&quot;mean&quot;, geom=&quot;segment&quot;, mapping=aes(xend=..x.. - 0.1, yend=..y..), linewidth = 0.5)+
@@ -1591,7 +1591,7 @@ signif_hub_genes_only &lt;- all_module_trait_dat %&gt;%
   filter(hub_gene %in% p_vs_np_3mos_select$hub_gene)</code></pre>
 <div id="figure-s3a-of-revised-manuscript" class="section level4">
 <h4>Figure S3A of revised manuscript</h4>
-<pre class="r"><code>all_scat_plot</code></pre>
+<pre class="r"><code>all_beeswarm_plot</code></pre>
 <pre><code>## Warning: The dot-dot notation (`..x..`) was deprecated in ggplot2 3.4.0.
 ## ℹ Please use `after_stat(x)` instead.
 ## This warning is displayed once every 8 hours.
@@ -1656,8 +1656,8 @@ lapply(WGCNA_dat_select, nrow)</code></pre>
 ## $MElavenderblush2
 ## [1] 62</code></pre>
 </div>
-<div id="overrepesentation-analysis" class="section level3">
-<h3>Overrepesentation Analysis</h3>
+<div id="over-representation-analysis" class="section level3">
+<h3>Over-representation Analysis</h3>
 <pre class="r"><code>source(&quot;https://raw.githubusercontent.com/TranLab/kspzv1-systems/main/helper/ApplyORA2Genesets.R&quot;)
 myuniverse &lt;- unique(fData(x)[fData(x)$EnsemblID %in% colnames(WGCNA_matrix),]$GeneSymbol)
 ORA_baseline_bound_df &lt;- c()
@@ -1741,8 +1741,8 @@ ORA_baseline_allbound &lt;- bind_rows(RIOK3_ORA_baseline_bound,
   dplyr::select(module, module_size, hub_gene, module_type, pathway, overlap,
                 pct_overlap, size, overlapGenes, pval, padj, neglogpadj)</code></pre>
 </div>
-<div id="plot-wgcna-over-represenation-results" class="section level3">
-<h3>Plot WGCNA Over-represenation Results</h3>
+<div id="plot-wgcna-over-representation-results" class="section level3">
+<h3>Plot WGCNA Over-representation Results</h3>
 <p>baseline analysis</p>
 <pre class="r"><code>myModuleTypes &lt;- c(&quot;MSigDB_Hallmark_v7.4&quot;, &quot;MSigDB_C2_kegg_v7.4&quot;, &quot;highBTMs&quot;, &quot;BloodGen3Module&quot;)
 myORAClusterPlotDat &lt;- ORA_baseline_allbound %&gt;%

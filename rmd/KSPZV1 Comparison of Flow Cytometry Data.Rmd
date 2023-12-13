@@ -7,7 +7,7 @@ output: html_document
 
 This script generates the plots for comparing P vs NP in FACS.
 
-```{r setup, include=FALSE}
+```{r setup, message=FALSE, warning=FALSE}
 library(tidyverse)
 library(readxl)
 library(ggpubr)
@@ -20,12 +20,15 @@ addSmallLegend <- function(myPlot, pointSize = 3, textSize = 6, spaceLegend = 0.
               legend.key.size = unit(spaceLegend, "lines"))
 }
 
-datadir <- "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/"
-resdir <- "/Volumes/GoogleDrive/My Drive/Manuscripts/KSPZV1 Manuscript/Manuscript Data for Figures/"
-figdir <- "/Volumes/GoogleDrive/My Drive/Manuscripts/KSPZV1 Manuscript/Figures/"
+datadir <- "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/"
+resdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Prelim Results JCI resubmission/"
+figdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Working Figures/"
 load(paste0(datadir, "Final Data Files/PfSPZ Expression Set and DGElist SeqMonk 1 to 6.RData"))
 x <- pfspz_eset_SM6
-alldat <- readRDS(file = "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/PfSPZ_FACS_PlasmaCytokine_MonocyteActivation_03312021.Rds")
+```
+
+```{r readin PfSPZ_FACS_PlasmaCytokine_MonocyteActivation_03312021, eval=FALSE, echo=FALSE}
+alldat <- readRDS(file = "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/PfSPZ_FACS_PlasmaCytokine_MonocyteActivation_03312021.Rds")
 ```
 
 ## Objective
@@ -78,6 +81,8 @@ foo <- longdat %>%
   na.omit %>%
   group_by(Outcome, Dosegroup, FACS_feature) %>%
   mutate(pos = 1:n(), label = ifelse(pos==1, n(), "")) %>%
+  dplyr::select(-pos) %>%
+  ungroup() %>%
   mutate(Outcome = factor(Outcome, levels = c("infected","uninfected"),labels = c("NP","P"))) %>%
   mutate(FACS_feature = factor(FACS_feature,
                                levels = c("CD19+ of live PBMCs", "atypical memory of B cells", "memory of B cells", "naive of B cells", "PBs of B cells",
@@ -85,9 +90,7 @@ foo <- longdat %>%
                                           "CD14+ of live PBMCs", "CD14+CD16+ of live monocytes", "CD14+CD16- of live monocytes", "CD14-CD16+ of live monocytes",
                                           "CD11c+ of live monocytes", "CD3+CD4+ of live lymphocytes", "CD3+CD8+ of live lymphocytes",
                                           "CD56+CD16+ of live lymphocytes",
-                                          "TCRgd", "Vd2 of TCRgd"))) %>%
-  dplyr::select(-pos) %>%
-  ungroup()
+                                          "TCRgd", "Vd2 of TCRgd"))) 
 
 myPlot <- foo %>%
   ggplot(., aes(x = Dosegroup, y = FACS_value, color = Outcome, fill = Outcome)) +
@@ -107,7 +110,7 @@ myPlot <- foo %>%
 myPlot
 ```
 
-```{r save figure}
+```{r save figure, include=FALSE, echo=FALSE, eval=FALSE}
 cairo_pdf(filename = paste0(figdir,"Supplementary Figure Baseline Flow Data Wilcox 06282022.pdf"), height = 8, width = 8, onefile = TRUE) 
 print(myPlot)
 dev.off()
@@ -156,6 +159,7 @@ myPlot <- foo %>%
         strip.background = element_blank()) +
   scale_y_discrete(limits=rev) +
   facet_wrap(~Dosegroup, ncol = 4)
+
 myPlot
 
 # cairo_pdf(filename = paste0(figdir,"Fig SX Baseline Flow Data Heatmap zscore_mean 05132021.pdf"), height = 4, width = 4) 
@@ -390,9 +394,9 @@ Fig 3a: Volcano plot of CSP-specific IgG and flow cytometry features at each tim
 
 
 ```{r, simple correlations of each cellular data with TTE, echo=FALSE, fig.width=6, fig.height=5}
-library(ggpubr)
+ library(ggpubr)
 followuptime <- 6
-myCorMeth <- "pearson"
+myCorMeth <- "spearman"
 features_keep <- c("CD19+ of live PBMCs", "atypical memory of B cells", "memory of B cells", "naive of B cells", "PBs of B cells", "immature of B cells",
                         "CSP-spec of B cells", "CSP-spec of memory B cells", "IgG+ of memory", "IgM+ of memory",
                         "CD14+ of live PBMCs", "CD14+CD16+ of live monocytes", "CD14+CD16- of live monocytes", "CD14-CD16+ of live monocytes", "CD11c+ of live monocytes",
@@ -433,7 +437,16 @@ longdat.tte <- pData(x) %>%
   mutate(feature = gsub("FACS_", "", feature)) %>%
   mutate(feature = gsub("_", " ", feature))
 
-# saveRDS(longdat.tte, "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 PhenoData TTE 6 months Long Format.rds")
+# longdat.tte.recode.patid <- longdat.tte %>%
+#   arrange(Dosegroup, Outcome, feature) %>%
+#   group_by(feature) %>%
+#   mutate(dummy_index_id = 1:n()) %>%
+#   ungroup() %>%
+#   dplyr::select(-PATID) %>%
+#   dplyr::select(dummy_index_id, everything())
+# 
+# saveRDS(longdat.tte.recode.patid, paste0(datadir, "Final Data Files/", "KPSZV1_FACS_Time2Parasitemia_LongDat.rds"))
+
 summarized_correlations <- longdat.tte %>%
   group_by(feature) %>%
   summarise(baseline_pearson_r_tte6mos = stats::cor.test(Baseline, tte.mal.atp.6, method = myCorMeth)$estimate,
@@ -457,9 +470,13 @@ summarized_correlations <- longdat.tte %>%
   mutate(color = ifelse(is_significant=="ns", "gray", color)) %>%
   mutate(timepoint2 = ifelse(is_significant=="ns", "not significant", as.character(timepoint))) %>%
   mutate(timepoint2 = factor(timepoint2, levels = c("baseline", "2 weeks post-vax", "log2 fold-change","not significant"), labels = c("baseline","2 weeks post-vax","log2 fold-change", "not significant")))
+```
 
-# saveRDS(summarized_correlations, "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 Summarized Correlations Features TTE 6 months.rds")
+```{r save correlations}
+saveRDS(summarized_correlations, "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 Summarized Kendall Correlations Features TTE 6 months.rds")
+```
 
+```{r make volcanoplot}
 cols <- c("baseline" = "blue", "2 weeks post-vax" = "red", "log2 fold-change" = "orange")
 cols2 <- c("baseline" = "blue", "2 weeks post-vax" = "red", "log2 fold-change" = "orange", "not significant" = "gray")
 myPlot <- ggplot(summarized_correlations, aes(x = pearson_r, y = neglogpval, fill = timepoint2, color = timepoint, label = label)) +

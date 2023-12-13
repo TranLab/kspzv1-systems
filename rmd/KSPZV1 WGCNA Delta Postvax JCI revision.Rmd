@@ -1,7 +1,7 @@
 ---
 title: "KSPZV1 WGCNA Delta Postvax"
 author: "Tuan M. Tran"
-date: "04/30/2023"
+date: "11/22/2023"
 output: html_document
 ---
 
@@ -14,7 +14,7 @@ References:
 https://horvath.genetics.ucla.edu/html/CoexpressionNetwork/Rpackages/WGCNA/Tutorials/
 https://horvath.genetics.ucla.edu/html/CoexpressionNetwork/JMiller/Tutorial%20document.pdf
 
-Revised analyses to perform module-trait relationship as moderated t tests.
+Reviewer requested that we provide scatter plots for the correlations between modules and phenotypes. Review of the original code revealed that using Pearson's or Spearman's correlation to assess the relationship between modules and binary traits was not appropriate. Thus, we performed limma (empirical Bayes moderated t test) and presented differences as beeswarm plots with mean and 95%CI.
 
 ### Load packages
 
@@ -162,9 +162,96 @@ dim(textMatrix) <- dim(modTraitCor.select)
 topmodules <- chooseTopHubInEachModule(WGCNA_matrix, net$colors, omitColors = "grey", power = 12.5, type ="signed")
 ```
 
-### Prepare data for differential module eigengene analysis
+### Display the correlation values within a heatmap plot (original Figure 4B of JCI revision)
 
-```{r prepare data for differential ME expression, fig.align='center', fig.height=8, fig.width=8}
+```{r plot module trait correlations heatmap, warning=FALSE, message=FALSE, fig.align='center', fig.width=8, fig.height=8}
+par(mar = c(11, 9, 1, 1))
+labeledHeatmap(Matrix = modTraitCor.select, xLabels = names(datvar),
+               yLabels = rownames(modTraitCor.select), ySymbols = rownames(modTraitCor.select),
+               colorLabels =FALSE,colors=blueWhiteRed(100),textMatrix=textMatrix,
+               setStdMargins = FALSE, zlim = c(-1,1),
+               main = paste("Module-trait relationships"),xLabelsAngle = 45) 
+```
+ 
+### Identify hub genes
+
+```{r id hub genes, warning=FALSE, message=FALSE}
+myColors <- gsub("ME", "", rownames(modTraitCor.select))
+topmodules <- chooseTopHubInEachModule(WGCNA_matrix, net$colors, omitColors = "grey", power = 12.5, type ="signed")
+mytopmodules <- topmodules[myColors] %>%
+  as.data.frame() %>%
+  dplyr::rename(EnsemblID = ".") %>%
+  rownames_to_column("module_label") %>%
+  as_tibble() %>%
+  left_join(., fData(x) %>%
+              dplyr::select(EnsemblID, GeneSymbol), by = "EnsemblID")
+devtools::source_url("https://github.com/jtlovell/limmaDE2/blob/master/R/wgcna2igraph.R?raw=TRUE")
+graph <- wgcna2igraph(net = net, WGCNA_matrix, modules2plot = myColors,
+                      colors2plot = myColors,
+                      kME.threshold = 0.5, adjacency.threshold = 0.1,
+                      adj.power = power, verbose = T,
+                      node.size = 1, frame.color = NA, node.color = scales::muted("red"),
+                      edge.alpha = .7, edge.width = 0.5)
+hubscores <- hub_score(graph, scale = TRUE, weights = NULL,
+  options = arpack_defaults)
+```
+
+### Top modules and hub genes (rownames for Figure 4E of pre-print)
+
+```{r display my topmodules, echo=FALSE}
+knitr::kable(mytopmodules)
+```
+
+### Plot network graph of significant modules (Figure 4C of JCI revision)
+
+Network graphs of significant modules containing nodes (red dots) and edges (lines) meeting minimum thresholds. Correlations between nodes in different modules are shown as black edges.
+
+```{r plot networkd graph, message=FALSE, warning=FALSE, fig.align='center', fig.width=8, fig.height=8, echo=FALSE}
+plot(graph)
+```
+
+### Make X-Y scatterplots between MEs and variables
+
+This was requested by a reviewer.
+
+First find significant Spearman correlations (p<0.05)
+
+```{r scatterplots between MEs and variables}
+all_modules <- topmodules %>%
+  as.data.frame() %>%
+  dplyr::rename(EnsemblID = ".") %>%
+  rownames_to_column("module_color") %>%
+  as_tibble() %>%
+  left_join(., fData(x) %>%
+              dplyr::select(EnsemblID, GeneSymbol), by = "EnsemblID")
+
+all_MEs <- MEs %>%  #MEs[,names(lapply(WGCNA_dat_select, nrow))] %>%
+  rownames_to_column(var = "subject_id") %>%
+  left_join(., datvar %>%
+              rownames_to_column(var = "subject_id"),
+            by = "subject_id") %>%
+  pivot_longer(., cols = c("pre-vax anti-CSP IgG", "parasitemic events during vax period", "days to first parasitemia",  "log2FC anti-CSP IgG"), names_to = "trait", values_to = "trait_value") %>%
+  pivot_longer(., cols = contains("ME"), names_to = "module_label", values_to = "module_eigenvalue") %>%
+  mutate(module_color = gsub("ME", "", module_label)) %>%
+  left_join(., all_modules,
+            by = "module_color")
+
+cor_dat_all <- all_MEs %>%
+  group_by(GeneSymbol, trait) %>%
+  summarize(rho = cor.test(module_eigenvalue, trait_value, method = "spearman")$estimate,
+            p = cor.test(module_eigenvalue, trait_value, method = "spearman")$p.value)
+
+cor_dat_signif <- cor_dat_all %>%
+  filter(trait == "days to first parasitemia" & p<0.05)
+
+spearman_signif_hub_genes <- cor_dat_signif$GeneSymbol
+```
+
+### Limma method
+
+Prepare data for differential module eigengene analysis
+
+```{r prepare data for differential ME expression}
 diffME_dat <- orderMEs(net$MEs) %>% 
   rownames_to_column(var = "subject") %>%
   mutate(subject = gsub("\\_0", "", subject)) %>%
@@ -192,7 +279,6 @@ diffME_dat_samplesize <- diffME_dat %>%
   summarize(n=n()) %>% 
   ungroup()
 ```
-### Limma method
 
 ```{r WGCNA to limma}
 pheno_dat <- diffME_dat %>%
@@ -234,10 +320,9 @@ ifelse(all(colnames(exprs_dat) == rownames(pheno_dat)) &
 wgcna_eset <- ExpressionSet(exprs_dat, phenoData = AnnotatedDataFrame(pheno_dat), featureData = AnnotatedDataFrame(feature_dat))
 ```
 
-
-Full dataset
-
 ```{r full dataset}
+#Determine differences between module eigenvalues as binary using limma
+
 #Pf_baseline
 pf_during_vax <- factor(wgcna_eset$`parasitemic during vax period`) #encodes a vector as a factor
 treatment <- wgcna_eset$treat
@@ -334,63 +419,323 @@ all_module_trait_hm_dat <- all_module_trait_dat %>%
   dplyr::select(comparison, module_color, hub_gene, logFC) %>%
   pivot_wider(names_from = comparison, values_from = logFC) %>%
   column_to_rownames(var = "hub_gene")
+
+lapply(WGCNA_dat_select, nrow)
 ```
-
+```{r prepare heatmap wgcna limma, fig.align='center', fig.height=5, fig.width=7, include=FALSE, echo=FALSE, eval=FALSE}
 ### Heatamp for WGCNA Limma data
+#Look only at modules that were significantly different between P vs NP, which is RIOK3 and SEC62
 
-```{r heatmap wgcna limma, fig.align='center', fig.height=9, fig.width=9}
-all_module_trait_hm_annot_dat <- all_module_trait_hm_dat %>%
-  rownames_to_column(var= "hub_gene") %>%
-  select(hub_gene)
+library(tidyverse)
+library(ComplexHeatmap)
 
-all_module_trait_hm_mat <- all_module_trait_hm_dat %>%
-  select(-module_color) %>%
+p_vs_np_3mos_select <- p_vs_np_3mos %>%
+  filter(P.Value < 0.05) %>%
+  dplyr::select(comparison, hub_gene, module_color, logFC, P.Value, adj.P.Val)
+
+Pf_during_vax_select <- Pf_during_vax %>%
+  filter(hub_gene %in% p_vs_np_3mos_select$hub_gene) %>%
+  dplyr::select(comparison, hub_gene, module_color, logFC, P.Value, adj.P.Val)
+
+CSPAb_baseline_select <- CSPAb_baseline %>%
+  filter(hub_gene %in% p_vs_np_3mos_select$hub_gene) %>%
+  dplyr::select(comparison, hub_gene, module_color, logFC, P.Value, adj.P.Val)
+
+hi_vs_low_CSP_select <- hi_vs_low_CSP %>%
+  filter(hub_gene %in% p_vs_np_3mos_select$hub_gene) %>%
+  dplyr::select(comparison, hub_gene, module_color, logFC, P.Value, adj.P.Val)
+  
+
+all_module_trait_binary_hm_dat <- bind_rows(p_vs_np_3mos_select,
+                                     Pf_during_vax_select,
+                                     CSPAb_baseline_select,
+                                     hi_vs_low_CSP_select)
+
+all_module_trait_binary_hm_mat <- all_module_trait_binary_hm_dat %>%
+  dplyr::select(comparison, hub_gene, logFC) %>%
+  pivot_wider(names_from = "comparison", values_from = "logFC", id_cols = hub_gene) %>%
+  column_to_rownames(var = "hub_gene") %>%
   as.matrix()
 
-row_ha = rowAnnotation(module = all_module_trait_hm_dat$module_color)
 
 clab <- list(
   "hub_gene" = c("RIOK3" = "midnightblue", "SEC62" = "brown4")
   )
 
 clab <- rev(clab)
-row_ha <- rowAnnotation(df = all_module_trait_hm_annot_dat, col = clab, na_col = "lavender", annotation_name_gp = gpar(fontsize = 7),
-                        simple_anno_size = unit(0.2, "inches"))
 
+row_ha_df <-  all_module_trait_binary_hm_dat %>%
+  filter(comparison == "protected_vs_not_protected") %>%
+  dplyr::select(hub_gene)
+row_ha <- rowAnnotation(df = row_ha_df, col = clab, na_col = "lavender", annotation_name_gp = gpar(fontsize = 7),
+                        simple_anno_size = unit(0.2, "inches"))
 
 paletteLength <- 50
 # length(breaks) == length(paletteLength) + 1
 # use floor and ceiling to deal with even/odd length pallettelengths
-myBreaks <- c(seq(-1*max(abs(all_module_trait_hm_mat)), 0, length.out=ceiling(paletteLength/2) + 1), 
-              seq(max(all_module_trait_hm_mat)/paletteLength, max(abs(all_module_trait_hm_mat)), length.out=floor(paletteLength/2)))
-myColor <- colorRampPalette(c("dodgerblue", "white", "#b22222"))(length(myBreaks))
+myBreaks <- c(seq(-1*max(abs(all_module_trait_binary_hm_mat)), 0, length.out=ceiling(paletteLength/2) + 1), 
+              seq(max(all_module_trait_binary_hm_mat)/paletteLength, max(abs(all_module_trait_binary_hm_mat)), length.out=floor(paletteLength/2)))
+myColor <- colorRampPalette(c("#548FCB", "white", "#B83434"))(length(myBreaks))
 
-cairo_pdf(file = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Figure 4B Revised to WGCNA limma.pdf", width = 5, height = 4)
-Heatmap(all_module_trait_hm_mat,
+my_hm <- Heatmap(all_module_trait_binary_hm_mat,
         col = circlize::colorRamp2(myBreaks, myColor),
         color_space = "LAB",
         row_names_side = "left",
         row_dend_side = "right",
         left_annotation = row_ha,
         border = TRUE)
+```
+
+```{r draw hm, fig.align='center', fig.width=4, fig.height=4, include=FALSE, echo=FALSE, eval=FALSE}
+draw(my_hm)
+```
+
+```{r save Figure 4B Revised to WGCNA limma, include=FALSE, echo=FALSE, eval=FALSE}
+cairo_pdf(file = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Figure 4B Revised to WGCNA limma SEC62 and RIOK3.pdf", width = 5, height = 4)
+draw(my_hm)
 dev.off()
 ```
 
-### Display the correlation values within a heatmap plot (Figure 4E of pre-print)
-
-```{r plot module trait correlations heatmap, warning=FALSE, message=FALSE, fig.align='center', fig.width=8, fig.height=8}
-par(mar = c(11, 9, 1, 1))
-labeledHeatmap(Matrix = modTraitCor.select, xLabels = names(datvar),
-               yLabels = rownames(modTraitCor.select), ySymbols = rownames(modTraitCor.select),
-               colorLabels =FALSE,colors=blueWhiteRed(100),textMatrix=textMatrix,
-               setStdMargins = FALSE, zlim = c(-1,1),
-               main = paste("Module-trait relationships"),xLabelsAngle = 45) 
+```{r make scatter plots for all significant continuous and binary variables}
+my_hub_genes <- c(spearman_signif_hub_genes, unique(all_module_trait_binary_hm_dat$hub_gene))
+my_scatter_plots <- all_MEs %>%
+  filter(GeneSymbol %in% my_hub_genes) %>%
+  mutate(trait = factor(trait, levels = c("pre-vax anti-CSP IgG", "parasitemic events during vax period",  "log2FC anti-CSP IgG", "days to first parasitemia"))) %>%
+  mutate(GeneSymbol = factor(GeneSymbol, levels =  my_hub_genes)) %>%
+  ggplot(., aes(x = trait_value, y = module_eigenvalue)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  xlab("trait value") +
+  ylab("module eigenvalue") +
+  stat_cor(method = "spearman",
+           cor.coef.name = "rho") +
+  theme_bw() +
+  ggh4x::facet_grid2(GeneSymbol~trait, scales = "free", switch = "y")
 ```
 
-### Identify hub genes
 
-```{r id hub genes, warning=FALSE, message=FALSE}
-myColors <- gsub("ME", "", rownames(modTraitCor.select))
+```{r plot scatter plots, fig.align='center', fig.height=16, fig.width=10, include=FALSE, eval=FALSE, echo=FALSE}
+my_scatter_plots
+```
+
+### Plot individual beeswarmplot plots for protected vs non-protected
+
+```{r plot significant scatter plots, fig.align='center', fig.width=8, fig.height=8}
+
+beeswarmplot_dat <- orderMEs(net$MEs) %>% 
+  rownames_to_column(var = "subject") %>%
+  mutate(subject = gsub("\\_0", "", subject)) %>%
+  right_join(., pData(wgcna_eset) %>%
+               dplyr::select(-c(site, treat)) %>%
+               rownames_to_column(var = "subject"),
+             by = "subject") %>%
+  pivot_longer(cols = contains("ME"), names_to = "module_label", values_to = "module_eigenvalue") %>%
+  mutate(module_color = gsub("ME", "", module_label)) %>%
+    left_join(., all_modules,
+              by = "module_color") %>%
+  filter(GeneSymbol %in% my_hub_genes)
+```
+
+```{r beeswarmplot factor data, fig.align='center', fig.width=12, fig.height=5}
+library(tidyverse)
+library(broom)
+beeswarmplot_dat_factor <- beeswarmplot_dat %>%
+  mutate(GeneSymbol = factor(GeneSymbol, levels = my_hub_genes)) %>%
+  mutate(protected_3mos = ifelse(`uninfected, 3 months` == "infected", "NP", "P")) %>%
+  pivot_longer(cols = c("fold-change anti-CSP IgG":"uninfected, 3 months", protected_3mos), names_to = "trait", values_to = "value")  %>%
+  mutate(trait = factor(trait, levels = c("parasitemic during vax period",
+                                          "pre-vax anti-CSP IgG",
+                                          "uninfected, 3 months",
+                                          "protected_3mos",
+                                          "fold-change anti-CSP IgG"))) %>%
+  filter(trait == "protected_3mos")
+
+beeswarmplot_dat_factor_norm_test <- beeswarmplot_dat_factor %>%
+  group_by(GeneSymbol, trait)%>% 
+  do(tidy(shapiro.test(.$module_eigenvalue))) %>% 
+  ungroup() %>%
+  dplyr::select(-method) %>%
+  mutate(is_normal = ifelse(p.value<0.05, "no","yes"))
+  
+beeswarmplot_dat_factor_n <- beeswarmplot_dat_factor %>%
+  group_by(GeneSymbol, trait) %>%
+  summarise(n = n())
+
+data_summary <- function(x) {
+  m <- mean(x, na.rm=TRUE)
+  sem <-sd(x, na.rm=TRUE)/sqrt(sum(!is.na(x)))
+  ymin<-m-1.96*sem
+  ymax<-m+1.96*sem
+  return(c(y=m,ymin=ymin,ymax=ymax))
+}
+
+
+all_beeswarm_plot <- beeswarmplot_dat_factor %>%
+  ggplot(., aes(x=value, y=module_eigenvalue)) +
+  ggbeeswarm::geom_beeswarm(alpha = 0.5, color = "lightblue") +
+  stat_summary(fun="mean", geom="segment", mapping=aes(xend=..x.. - 0.1, yend=..y..), linewidth = 0.5)+
+  stat_summary(fun="mean", geom="segment", mapping=aes(xend=..x.. + 0.1, yend=..y..), linewidth = 0.5) +
+  stat_summary(fun.data=data_summary, geom="errorbar", width=0.1) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.15))) +
+  ylab("module eigenvalue") +
+  xlab("") +
+  theme_bw() +
+  ggh4x::facet_grid2(GeneSymbol~trait, scales = "free", switch = "y") #+
+  # theme(axis.text = element_text(colour = "black"),
+  #       strip.background = element_blank(),
+  #       axis.text.x = element_text(angle = 45, vjust = 1, hjust=1),
+  #       plot.title = element_text(size=8))
+```
+
+#### Figure S6 of revised manuscript
+
+```{r plot all_beeswarm_plot, fig.align='center', fig.height=6, fig.width=2, include=FALSE, eval=FALSE, echo=FALSE}
+all_beeswarm_plot
+```
+
+```{r save scatter pltos and beeswarm arrange, fig.align='center', fig.height=12, fig.width=12}
+pdf(file = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Fig SS6A JCI revised WGCNA Spearman scatterplot and limma boxplots.pdf", height = 12, width = 10)
+ggarrange(my_scatter_plots, all_beeswarm_plot, widths = c(4,1.15))
+dev.off()
+```
+
+```{r scatter pltos and beeswarm arrange, fig.align='center', fig.height=12, fig.width=12}
+ggarrange(my_scatter_plots, all_beeswarm_plot, widths = c(4,1.15))
+```
+
+### Make revised heatmap (Figure 4B, JCI revision)
+
+This will show Spearman's rho as color scale.
+
+```{r prepare new heatmap}
+cor_dat <- my_scatter_plots$data %>%
+  group_by(GeneSymbol, trait) %>%
+  summarize(rho = cor.test(module_eigenvalue, trait_value, method = "spearman")$estimate,
+            p = cor.test(module_eigenvalue, trait_value, method = "spearman")$p.value)
+hm_cor_mat <- cor_dat %>%
+  dplyr::select(-p) %>%
+  pivot_wider(names_from = trait, values_from = rho) %>%
+  column_to_rownames(var = "GeneSymbol") %>%
+  as.matrix()
+mytopmodules_list <- all_modules %>%
+  filter(GeneSymbol %in% my_hub_genes) %>%
+  mutate(GeneSymbol = factor(GeneSymbol, levels = my_hub_genes)) %>%
+  dplyr::select(GeneSymbol, module_color) %>%
+  deframe()
+
+clab <- list(
+  "hub_gene" = mytopmodules_list
+  )
+clab <- rev(clab)
+
+row_ha_df <-  all_modules %>%
+  filter(GeneSymbol %in% my_hub_genes) %>%
+  dplyr::select(GeneSymbol) %>%
+  mutate(GeneSymbol = factor(GeneSymbol, levels = my_hub_genes)) %>%
+  arrange(GeneSymbol) %>%
+  dplyr::rename(hub_gene = "GeneSymbol")
+
+hm_cor_mat <- hm_cor_mat[levels(row_ha_df$hub_gene),]
+
+row_ha <- rowAnnotation(df = row_ha_df, col = clab, na_col = "lavender", annotation_name_gp = gpar(fontsize = 7),
+                        simple_anno_size = unit(0.1, "inches"),
+                        show_legend = FALSE)
+
+paletteLength <- 50
+# length(breaks) == length(paletteLength) + 1
+# use floor and ceiling to deal with even/odd length pallettelengths
+myBreaks <- c(seq(-1*max(abs(hm_cor_mat)), 0, length.out=ceiling(paletteLength/2) + 1), 
+              seq(max(hm_cor_mat)/paletteLength, max(abs(hm_cor_mat)), length.out=floor(paletteLength/2)))
+myColor <- colorRampPalette(c("#548FCB", "white", "#B83434"))(length(myBreaks))
+
+my_hm <- Heatmap(hm_cor_mat,
+        col = circlize::colorRamp2(myBreaks, myColor),
+        color_space = "LAB",
+        row_names_side = "left",
+        row_dend_side = "right",
+        cluster_rows = FALSE,
+        cluster_columns = FALSE,
+        left_annotation = row_ha,
+        border = TRUE)
+```
+
+### Limma heatmap for P vs NP only
+
+```{r make Limma heatmap for P vs NP only}
+ hm_limma_mat <- p_vs_np_3mos %>%
+  filter(hub_gene %in% my_hub_genes) %>%
+  mutate(trait = "protection_3mos") %>%
+  dplyr::select(hub_gene, trait, logFC) %>%
+  pivot_wider(names_from = trait, values_from = logFC) %>%
+  column_to_rownames(var = "hub_gene") %>%
+  as.matrix(., nrow(.), byrow=TRUE)
+  
+mytopmodules_list <- all_modules %>%
+  filter(GeneSymbol %in% my_hub_genes) %>%
+  mutate(GeneSymbol = factor(GeneSymbol, levels = my_hub_genes)) %>%
+  dplyr::select(GeneSymbol, module_color) %>%
+  deframe()
+
+clab <- list(
+  "hub_gene" = mytopmodules_list
+  )
+clab <- rev(clab)
+
+row_ha_df <-  all_modules %>%
+  filter(GeneSymbol %in% my_hub_genes) %>%
+  dplyr::select(GeneSymbol) %>%
+  mutate(GeneSymbol = factor(GeneSymbol, levels = my_hub_genes)) %>%
+  arrange(GeneSymbol) %>%
+  dplyr::rename(hub_gene = "GeneSymbol")
+
+hm_limma_mat <- hm_limma_mat[levels(row_ha_df$hub_gene), 1, drop = FALSE]
+
+row_ha <- rowAnnotation(df = row_ha_df, col = clab, na_col = "lavender", annotation_name_gp = gpar(fontsize = 7),
+                        simple_anno_size = unit(0.1, "inches"))
+
+paletteLength <- 50
+# length(breaks) == length(paletteLength) + 1
+# use floor and ceiling to deal with even/odd length pallettelengths
+myBreaks <- c(seq(-1*max(abs(hm_limma_mat)), 0, length.out=ceiling(paletteLength/2) + 1), 
+              seq(max(hm_limma_mat)/paletteLength, max(abs(hm_limma_mat)), length.out=floor(paletteLength/2)))
+myColor <- colorRampPalette(c("#548FCB", "white", "#B83434"))(length(myBreaks))
+
+my_limma_hm <- Heatmap(hm_limma_mat,
+        col = circlize::colorRamp2(myBreaks, myColor),
+        color_space = "LAB",
+        cluster_rows = FALSE,
+        row_names_side = "left",
+        row_dend_side = "right",
+        #left_annotation = row_ha,
+        border = TRUE)
+```
+
+```{r view combined heatmaps, fig.align='center', fig.width=5, fig.height=4}
+my_hm + my_limma_hm
+```
+```{r save combined heatmaps, fig.align='center', fig.width=5, fig.height=4}
+pdf(file = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Fig 4B JCI revised WGCNA Spearman and limma heatmap.pdf", height = 4, width = 3.75)
+my_hm + my_limma_hm
+dev.off()
+```
+
+```{r save heatmap data, eval=FALSE, include=FALSE, echo=FALSE}
+
+combined_hm_mat <- as.data.frame(hm_cor_mat) %>%
+  rownames_to_column(var = "hub_gene") %>%
+  left_join(., as.data.frame(hm_limma_mat) %>%
+              rownames_to_column(var = "hub_gene"),
+            by = "hub_gene")
+writexl::write_xlsx(combined_hm_mat, path = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 4B Heatmap Data Continuous and Binary Limma.xlsx")
+
+```
+
+### Redo network graphs
+
+```{r id hub genes jci revision, warning=FALSE, message=FALSE}
+foo <- all_modules %>%
+  filter(GeneSymbol %in% my_hub_genes)
+myColors <- foo$module_color
 topmodules <- chooseTopHubInEachModule(WGCNA_matrix, net$colors, omitColors = "grey", power = 12.5, type ="signed")
 mytopmodules <- topmodules[myColors] %>%
   as.data.frame() %>%
@@ -409,28 +754,28 @@ graph <- wgcna2igraph(net = net, WGCNA_matrix, modules2plot = myColors,
 hubscores <- hub_score(graph, scale = TRUE, weights = NULL,
   options = arpack_defaults)
 ```
-
-### Top modules and hub genes (rownames for Figure 4E of pre-print)
-
-```{r display my topmodules, echo=FALSE}
-knitr::kable(mytopmodules)
-```
-
-### Plot network graph of significant modules (Figure 4F of pre-print)
+### Plot network graph of significant modules (Figure 4C of JCI revision)
 
 Network graphs of significant modules containing nodes (red dots) and edges (lines) meeting minimum thresholds. Correlations between nodes in different modules are shown as black edges.
 
-```{r plot networkd graph, message=FALSE, warning=FALSE, fig.align='center', fig.width=8, fig.height=8, echo=FALSE}
+```{r plot networkd graph jci revision, message=FALSE, warning=FALSE, fig.align='center', fig.width=8, fig.height=8, echo=FALSE}
 plot(graph)
 ```
 
-### Identify modules with < 0.05
+```{r save plot networkd graph jci revision, message=FALSE, warning=FALSE, eval=FALSE, include=FALSE, echo=FALSE}
+pdf(file = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Fig 4C JCI revised WGCNA network plots.pdf", height = 4, width = 3)
+plot(graph)
+dev.off()
+```
+
+### FGSEA on WGCNA Results, JCI revision
 
 List number of genes per module
 
 ```{r id modules that are significant than pull out gene list, warning=FALSE, message=FALSE}
+downselected_MEs <- paste0("ME", myColors)
 WGCNA_dat_select <- c()
-for(i in modTraitP.temp$Module){
+for(i in downselected_MEs){
   module.color <- sub("ME","", i)
   module.colname <- paste0("kME", i)
   WGCNA_dat_select[[i]] <- WGCNA_dat %>% 
@@ -440,14 +785,13 @@ for(i in modTraitP.temp$Module){
 lapply(WGCNA_dat_select, nrow)
 ```
 
-### FGSEA on WGCNA Results
-
 rank by module membership
 
 ```{r FGSEA on WGCNA Results, warning=FALSE, message=FALSE}
+closeAllConnections()
 minSize <- 5
 # Make rank list; ranked by ModuleMembership correlation
-  ranks <- GSEA_baseline_bound_df <- c()
+ranks <- GSEA_baseline_bound_df <- c()
 devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/NamedGeneRankList2GseaTable.R?raw=TRUE")
 for(k in names(WGCNA_dat_select)){
   WGCNA_dat_select[[k]] <- WGCNA_dat_select[[k]][order(WGCNA_dat_select[[k]][,2], decreasing = TRUE),]
@@ -458,23 +802,20 @@ for(k in names(WGCNA_dat_select)){
                                                                                  "_minSize", minSize), scoreType = "pos", minSize = minSize, fixed_seed = TRUE)
   }
 ```
-
-###  Results
+### WCGNA GSEA Results
 
 delta analysis
 
 ```{r prepare data wgcna gsea, warning=FALSE, message=FALSE}
 myModuleTypes <- c("MSigDB_Hallmark_v7.4", "MSigDB_C2_kegg_v7.4", "highBTMs", "lowBTMs", "MonacoModules", "BloodGen3Module")
-myGSEAClusterPlotDat <- GSEA_baseline_bound_df$MElightgreen %>%
-  mutate(module_hub = "CD22") %>%
-  bind_rows(., GSEA_baseline_bound_df$MEpaleturquoise %>%
-              mutate(module_hub = "BTLA") ) %>%
+myGSEAClusterPlotDat <- GSEA_baseline_bound_df$MEpaleturquoise %>%
+  mutate(module_hub = "BTLA") %>%
+  bind_rows(., GSEA_baseline_bound_df$MElightgreen %>%
+              mutate(module_hub = "CD22") ) %>%
+  bind_rows(., GSEA_baseline_bound_df$MEmistyrose %>%
+              mutate(module_hub = "LTF")) %>%
   bind_rows(., GSEA_baseline_bound_df$MElightblue4 %>%
-                mutate(module_hub = "NKG2-E")) %>%
-  bind_rows(., GSEA_baseline_bound_df$MEcoral4 %>%
-              mutate(module_hub = "KDM5D")) %>%
-  bind_rows(., GSEA_baseline_bound_df$MEsalmon2 %>%
-              mutate(module_hub = "TRIP12")) %>%
+                mutate(module_hub = "NKG2-E")) %>%  
   bind_rows(., GSEA_baseline_bound_df$MEbrown4 %>%
               mutate(module_hub = "SEC62")) %>%
   bind_rows(., GSEA_baseline_bound_df$MEmidnightblue %>%
@@ -494,12 +835,12 @@ myGSEAClusterPlotDat <- GSEA_baseline_bound_df$MElightgreen %>%
                                                       ifelse(module_type == "highBTMs", scales::muted("blue"), 
                                                              ifelse(module_type == "MSigDB_C2_kegg_v7.4", scales::muted("green"),
                                                                     ifelse(module_type == "MSigDB_C2_kegg_v7.4", scales::muted("purple"), "gray")))))))) %>%
-  filter(padj < 0.20) %>%
+  filter(padj < 0.05) %>%
   filter(module_type %in% myModuleTypes) %>%
   droplevels()
 ```
 
-### GSEA Bubble plot (Figure S5B in pre-print)
+### GSEA Bubble plot (Figure S6B in JCI Revision)
 
 Gene set enrichment analysis of genes ranked by membership within indicated modules which were determined by
 weight gene correlation network analysis (WGCNA) of whole-blood Δ transcriptomes.
@@ -539,3 +880,147 @@ myGSEAClusterPlot <- myGSEAClusterPlotDat %>%
 addSmallLegend(myGSEAClusterPlot)
 ```
 
+### Overrepesentation Analysis
+
+```{r WGCNA ora, message=FALSE, warning=FALSE}
+closeAllConnections()
+source("https://raw.githubusercontent.com/TranLab/kspzv1-systems/main/helper/ApplyORA2Genesets.R")
+myuniverse <- unique(fData(x)[fData(x)$EnsemblID %in% colnames(WGCNA_matrix),]$GeneSymbol)
+ORA_baseline_bound_df <- c()
+minSize <- 20
+downselected_MEs
+#Combine similar modules skyblue1, mediumpurple1, thistle3 in to one
+WGCNA_dat_select2 <- list()
+WGCNA_dat_select2$NKG2E <- WGCNA_dat_select$MElightblue4
+WGCNA_dat_select2$LTF <- WGCNA_dat_select$MEmistyrose
+WGCNA_dat_select2$BLTA_CD22 <- data.table::rbindlist(list(WGCNA_dat_select$MEpaleturquoise,
+                                                WGCNA_dat_select$MElightgreen)) %>%
+  as.data.frame() %>%
+  dplyr::rename(kMEMEall = "kMEMEpaleturquoise") 
+WGCNA_dat_select2$RIOK3_SEC62 <- data.table::rbindlist(list(WGCNA_dat_select$MEmidnightblue,
+                                                WGCNA_dat_select$MEbrown4)) %>%
+  as.data.frame() %>%
+  dplyr::rename(kMEMEall = "kMEMEmidnightblue")
+for(k in names(WGCNA_dat_select2)){
+  WGCNA_dat_select2[[k]] <- WGCNA_dat_select2[[k]][order(WGCNA_dat_select2[[k]][,2], decreasing = TRUE),]
+  ORA_baseline_bound_df[[k]] <- ApplyORA2Genesets(genelist = WGCNA_dat_select2[[k]]$GeneSymbol,
+                                                  geneset = "all",
+                                                  universe = myuniverse,
+                                                  output_directory = tempdir(),
+                                                  filename_prefix = paste0("ORA_Mod_Corr_Protect_3_mos_", k,
+                                                                           "_minSize", minSize),
+                                                  minSize = minSize)
+  }
+
+
+NKG2E_ORA_baseline_bound <- bind_rows(ORA_baseline_bound_df$NKG2E, .id = "module_type") %>%
+  mutate(module = "lightblue4") %>%
+  mutate(module_size = nrow(WGCNA_dat_select$MElightblue4)) %>%
+  mutate(hub_gene = "NKG2E") 
+LTF_ORA_baseline_bound <- bind_rows(ORA_baseline_bound_df$LTF, .id = "module_type") %>%
+  mutate(module = "mistyrose") %>%
+  mutate(module_size = nrow(WGCNA_dat_select$MEmistyrose)) %>%
+  mutate(hub_gene = "LTF")
+BLTA_CD22_ORA_baseline_bound <- bind_rows(ORA_baseline_bound_df$BLTA_CD22, .id = "module_type") %>%
+  mutate(module = "paleturquoise and lightgreen") %>%
+  mutate(module_size = nrow(WGCNA_dat_select2$BLTA_CD22)) %>%
+  mutate(hub_gene = "BLTA_CD22")
+RIOK3_SEC62_ORA_baseline_bound <- bind_rows(ORA_baseline_bound_df$RIOK3_SEC62, .id = "module_type") %>%
+  mutate(module = "midnightblue and brown4") %>%
+  mutate(module_size = nrow(WGCNA_dat_select2$RIOK3_SEC62)) %>%
+  mutate(hub_gene = "RIOK3_SEC62")
+
+
+ORA_baseline_allbound <- bind_rows(NKG2E_ORA_baseline_bound,
+                                  LTF_ORA_baseline_bound,
+                                  BLTA_CD22_ORA_baseline_bound,
+                                  RIOK3_SEC62_ORA_baseline_bound) %>%
+  mutate(neglogpadj = -log10(padj)) %>%
+  mutate(pct_overlap = 100*(overlap/module_size)) %>%
+  dplyr::select(module, module_size, hub_gene, module_type, pathway, overlap,
+                pct_overlap, size, overlapGenes, pval, padj, neglogpadj)
+```
+
+### Plot WGCNA overrepresentation results, JCI revision
+
+delta analysis
+
+```{r plotdat wgcna ORA, warning=FALSE, message=FALSE}
+myModuleTypes <- c("MSigDB_Hallmark_v7.4", "MSigDB_C2_kegg_v7.4", "highBTMs", "BloodGen3Module")
+myORAClusterPlotDat <- ORA_baseline_allbound %>%
+  mutate(pathway = gsub("VS", "v", pathway)) %>%
+  mutate(pathway = gsub("Vd", "Vδ", pathway)) %>%
+  mutate(pathway = gsub("gd", "γδ", pathway)) %>%
+  mutate(pathway = sub(".*?\\_", "", pathway)) %>%
+  mutate(pathway = fct_reorder(pathway, neglogpadj))  %>%
+  arrange(desc(neglogpadj))%>%
+  mutate(TextLabelColor = ifelse(module_type == "BloodGen3Module", scales::muted("red"),
+                                 ifelse(module_type == "MSigDB_C2_kegg_v7.4", scales::muted("blue"),
+                                        ifelse(module_type == "MSigDB_Hallmark_v7.4", "black","gray")))) %>%
+  filter(padj < 0.01) %>%
+  filter(pct_overlap >= 5) %>%
+  filter(module_type %in% myModuleTypes) %>%
+  group_by(hub_gene) %>%
+  arrange(neglogpadj) %>%
+  slice_tail(n = 4) %>%
+  ungroup()
+```
+
+### Arrange plots
+
+```{r make ggarranged plot, warning=FALSE, message=FALSE}
+addSmallLegend <- function(myPlot, pointSize = 1.5, textSize = 3, spaceLegend = 0.3) {
+    myPlot +
+        guides(shape = guide_legend(override.aes = list(size = pointSize)),
+               color = guide_legend(override.aes = list(size = pointSize))) +
+        theme(legend.title = element_text(size = textSize), 
+              legend.text  = element_text(size = textSize),
+              legend.key.size = unit(spaceLegend, "lines"))
+}
+
+scale_begin <- floor(min(myORAClusterPlotDat$pct_overlap, na.rm = TRUE))
+scale_end <- ceiling(max(myORAClusterPlotDat$pct_overlap, na.rm = TRUE))
+
+myArrangedPlot <- myORAClusterPlotDat %>%
+  mutate(pathway = fct_reorder(pathway, neglogpadj))  %>%
+  ggplot(., aes(x = neglogpadj, y = pathway, fill = pct_overlap)) +
+  geom_bar(stat = 'identity') +
+  geom_vline(xintercept = 2, color = "red", linetype = "dotted") +
+  scale_fill_distiller(direction = 1, breaks = c(0, 10, 20, 30, 40, 50), limits = c(0,50)) +
+  ylab("module") +
+  theme_classic(base_family = "sans", base_size = 14) +
+  theme(legend.position = "bottom",
+        plot.margin = unit(c(0,0.5,0,0.5), "cm")) +
+  facet_wrap(~hub_gene, scales ="free") +
+  theme(strip.background = element_blank())
+
+myfont <- "Helvetica"
+bubble_max_size <- 15
+basetextsize <- 10
+myORABubblePlot <- myORAClusterPlotDat %>%
+    mutate(pathway = fct_reorder(pathway, neglogpadj))  %>%
+  ggplot(., aes(x = hub_gene, y = pathway)) +
+  geom_point(aes(size=pct_overlap, fill = neglogpadj), alpha = 0.65, shape=21, stroke = 0.25) +
+  scale_size_area(name = expression(-log[10]~adj.~p~value), max_size = bubble_max_size, breaks = c(1, 5, 10, 20, 40, 60), limits = c(1,75)) +
+  viridis::scale_fill_viridis(option= "A", begin = 0.25, end = 0.75, alpha = 0.8, direction = -1, name = "% overlap") +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  scale_x_discrete(limits=rev) +
+  scale_y_discrete(position = "right") +
+  ylab("pathway/module") +
+  xlab("network hub gene(s)") +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90, vjust = 1, hjust=0)) +
+  coord_flip()
+```
+
+### Delta WGCNA Top Modules ORA bar plots (Figure S6B, JCI revision)
+ 
+```{r plot myORABubblePlot, fig.align='center', fig.width=7, fig.height=7, warning=FALSE, message=FALSE, echo=FALSE}
+print(myORABubblePlot)
+```
+
+```{r save myORABubblePlot, echo=FALSE, eval=FALSE, include=FALSE}
+cairo_pdf(filename = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Fig S6B Delta WCGNA Networks ORA JCI Revision.pdf", width = 6.75, height = 6.75)
+myORABubblePlot
+dev.off()
+```

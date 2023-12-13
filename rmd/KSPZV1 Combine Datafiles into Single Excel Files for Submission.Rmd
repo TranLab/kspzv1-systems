@@ -1,0 +1,92 @@
+---
+title: "KSPZV1 Combine Data Files into Single Excel Tables"
+author: "Tuan M. Tran"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+```
+
+## Objective
+
+Read-in individual data, clean up, combine, and export as single Excel files for submission.
+
+### Baseline DGE tables from KSPZV1, VRC312, VRC314, and BSPZV1
+
+Read in data
+
+```{r read in data baseline dge}
+datadir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Prelim Results JCI resubmission/"
+kspzv1_dat <- read.csv(paste0(datadir, "PfSPZ_edgeR_DGE_P_v_S_KSPZV1_baseline_allgroups_FDR100_all_adj.csv"))
+bspzv1_dat <- read.csv(paste0(datadir, "PfSPZ_edgeR_DGE_P_v_S_BSPZV1_FDR100_22x14091_sex_adj.csv")) %>%
+  mutate(Study = "BSPZV1") %>%
+  mutate(DoseGroup = "2 and 3") %>%
+  dplyr::rename(GeneSymbol = "gene_symbol",
+                EnsemblID = "ensembl_id") %>%
+  dplyr::select(Study, DoseGroup, GeneSymbol, EnsemblID, logFC:FDR)
+vrc312_dat <- read.csv(paste0(datadir, "PfSPZ_edgeR_DGE_P_v_S_VRC312_FDR100_27x13713_Grp3a3b4a4b4c_sex_adj.csv")) %>%
+  mutate(Study = "VRC312") %>%
+  mutate(DoseGroup = "3a, 3b, 4a, 4b, and 4c") %>%
+  mutate(EnsemblID = NA) %>%
+  dplyr::rename(GeneSymbol = "hgnc_symbol") %>%
+  dplyr::select(Study, DoseGroup, GeneSymbol, EnsemblID, logFC:FDR)
+vrc314_dat <- read.csv(paste0(datadir, "PfSPZ_edgeR_DGE_P_v_S_VRC314_FDR100_34x12059_Grp1456_sex_adj.csv")) %>%
+  mutate(Study = "VRC314") %>%
+  mutate(DoseGroup = "Grp1456") %>%
+  mutate(EnsemblID = NA) %>%
+  dplyr::rename(GeneSymbol = "hgnc_symbol") %>%
+  dplyr::select(Study, DoseGroup, GeneSymbol, EnsemblID, logFC:FDR)
+```
+
+Bind data
+
+```{r bind data baseline dge}
+all_dge_base_dat <- bind_rows(kspzv1_dat, vrc312_dat, vrc314_dat, bspzv1_dat)
+tab_dir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Tables JCI resubmission/"
+writexl::write_xlsx(list(KSPZV1 = kspzv1_dat, VRC312 = vrc312_dat, VRC314 = vrc314_dat, BSPZV1 = bspzv1_dat),
+                    path = paste0(tab_dir, "Table S1 Baseline DGE All Studies as Sheets.xlsx"))
+```
+
+### XGBoost ML Performance results for high-dose PfSPZ baseline, post-vax, delta and Placebo baseline
+
+```{r read in ML data}
+table_dir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Supplementary Tables JCI resubmission/all across folds xgb tables/"
+my_files <- list.files(table_dir)
+all_ML_tables <- c()
+for(i in my_files){
+  all_ML_tables[[i]] <- readxl::read_xlsx(path = paste0(table_dir, i))
+}
+names(all_ML_tables) <- gsub("Table S6 across folds xgb performance ", "", names(all_ML_tables))
+names(all_ML_tables) <- gsub(".xlsx", "", names(all_ML_tables))
+names(all_ML_tables) <- gsub(" ", "_", names(all_ML_tables))
+final_tab_dir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Supplementary Tables JCI resubmission/"
+writexl::write_xlsx(all_ML_tables, path = paste0(final_tab_dir, "Table S6 XGBoost across-folds ML performance all.xlsx"))
+```
+
+Check relationship between MBCs, plasmablasts, and CSP-specific IgG
+
+```{r check relationship between MBC plasmablasts and CSP-specific IgG}
+datadir2 <- "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/"
+high_dose_features <- read_rds(paste0(datadir2,"highdose_PfSPZ_baseline_correlation_ML_data_with_missing.rds")) %>%
+  dplyr::select(FACS_memory_of_B_cells, `CSP-specific IgG`, FACS_Plasmablasts_of_live_PBMCs) %>%
+  dplyr::rename(baseline_CSPAb = `CSP-specific IgG`) %>%
+  mutate(baseline_log10_CSPAb = log10(baseline_CSPAb+1))
+
+MBC_vs_CSP <- high_dose_features %>%
+  ggplot(., aes(x = FACS_memory_of_B_cells, y = baseline_log10_CSPAb)) +
+  geom_point() +
+  stat_smooth(method = "lm") +
+  stat_cor() +
+  theme_bw()
+
+PBs_vs_CSP <- high_dose_features %>%
+  ggplot(., aes(x = FACS_Plasmablasts_of_live_PBMCs, y = baseline_log10_CSPAb)) +
+  geom_point() +
+  stat_smooth(method = "lm") +
+  stat_cor() +
+  theme_bw()
+```

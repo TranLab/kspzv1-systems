@@ -1,0 +1,567 @@
+---
+title: "KSPZV1 correlate gene expression, immunophenotypes, and cytokines to time to parasitemia and post-vax anti-CSP IgG"
+author: "Prasida Holla, Aditi Upadhye, Tuan Tran"
+date: "9/30/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Objective:
+
+To assess  correlations between gene expression, flow cytometry, and cytokine features with time-to-first parasitemia (up to 6 months) and post-vaccination CSP-specific IgG titers.
+
+Notes: 
+
+Plasma cytokine concentrations were only included in the baseline but not in the correlations of post-vaccination and delta.
+Reduced number of genes using MADS filtering (top 10% most variable genes).
+Used FDR<1%.
+
+
+
+## Load required packages
+
+```{r load libraries, include = TRUE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tibble)
+library(viridis)
+library(ggpubr)
+library(readxl)
+library(ggcorrplot)
+library(Biobase)
+library(miscTools)
+library(circlize)
+library(RColorBrewer)
+library(googledrive)
+library(Hmisc)
+library(tmod)
+```
+
+```{r set local directory, include=FALSE, eval=FALSE, echo=FALSE}
+datadir <- "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/"
+figdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Working Figures/"
+```
+
+# Import the expression set and non-transcriptomic data (FACS, cytokine, ICS)
+
+```{r load data,  message=FALSE, warning=FALSE}
+##load full time to parasitemia data to 6 months for full 260 infants google drive
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1OwUUrQZ_1jl_JExe3QWxCp-GaR83TtGG"), path = temp, overwrite = TRUE)
+tte_data <- readRDS(file = dl$local_path)
+
+##import all non-transcriptomic data google drive
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1acv8D-gex3ps8o9SCWZT5ueP7XuPeHs3"), path = temp, overwrite = TRUE)
+alldata <- readRDS(file = dl$local_path)
+
+#load the baseline expression dataset
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1togaBlNIxiDj16FyXTC-r7Qw0A9cG2az"), path = temp, overwrite = TRUE)
+baseline_eset <- readRDS(file = dl$local_path)
+
+#load the post-vax expression dataset
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1w5Wzta8XISNHZ6KL-x9_qO98m3LxaOBa"), path = temp, overwrite = TRUE)
+postvax_eset <- readRDS(file = dl$local_path)
+
+#load the delta expression dataset
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("17xx0YaggLiyWdJc9rqA1nkPSE7dj05p0"), path = temp, overwrite = TRUE)
+delta_eset <- readRDS(file = dl$local_path)
+
+#make EnsemblID to GeneSymbol converstion df
+all_fDat <- bind_rows(fData(baseline_eset)[,c("EnsemblID", "GeneSymbol")],
+                      fData(postvax_eset)[,c("EnsemblID", "GeneSymbol")],
+                       fData(delta_eset)[,c("EnsemblID", "GeneSymbol")]) %>%
+  distinct()
+```
+
+```{r load data local, include=FALSE, eval=FALSE, echo=FALSE}
+#local paths
+
+# tte_data <- "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KPSZV1_tte_mal_atp_6_K1_ids_only.rds"
+
+#alldata <- readRDS("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/PfSPZ_FACS_PlasmaCytokine_MonocyteActivation_05012021.Rds")
+#alldata <- readRDS(paste0(wdir,"Forbaseline_non_transcriptomic_data.rds")) 
+
+#aditi's file
+# alldata <- readRDS("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/all_non_transcriptomic_data.rds")
+
+# eset <- readRDS("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 logCPM expression sets for visualization/PfSPZ_cpm_ExpressionSet_243x21576_AllGroups_bothBatches_25_rmBatchFX_06082021_TMT_logTRUE.rds")
+```
+
+## Filtering features
+
+Use only top 10 most variable genes to reduce number of features to evaluate (ends up being 2180-2375 genes)
+
+```{r filter by mads, message=FALSE, warning=FALSE}
+#create function
+mads_reduce <- function(x, pct){
+  start_nrow <- nrow(x)
+  if(pct < 100){
+    madsno <- as.integer(nrow(x)*(pct/100))
+    mads <- apply(exprs(x), 1, mad)  #mad filtering
+    x <- x[mads>sort(mads, decr=TRUE)[madsno],]
+  }
+  end_nrow <- nrow(x)
+  message <- print(paste0("features reduced from ", start_nrow, " to ", end_nrow))
+  return(c(eset = x, message = message))
+}
+
+baseline_eset_reduced <- mads_reduce(baseline_eset, 10)
+postvax_eset_reduced <- mads_reduce(postvax_eset, 10)
+delta_eset_reduced <- mads_reduce(delta_eset, 10)
+```
+
+dim(x)
+
+```{r join all data, message=FALSE, warning=FALSE}
+#remove _0 or _25 suffix from columnames
+baseline_genes <- exprs(baseline_eset_reduced$eset) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "EnsemblID") %>%
+  mutate(EnsemblID = paste0(EnsemblID, "_baseline")) %>%
+  column_to_rownames(var = "EnsemblID") %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column("PATID")  %>%
+  mutate(PATID = gsub("_.*", "", PATID))
+
+postvax_genes <- exprs(postvax_eset_reduced$eset) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "EnsemblID") %>%
+  mutate(EnsemblID = paste0(EnsemblID, "_postvax")) %>%
+  column_to_rownames(var = "EnsemblID") %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column("PATID")  %>%
+  mutate(PATID = gsub("_.*", "", PATID))
+
+delta_genes <- exprs(delta_eset_reduced$eset) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "EnsemblID") %>%
+  mutate(EnsemblID = paste0(EnsemblID, "_delta")) %>%
+  column_to_rownames(var = "EnsemblID") %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column("PATID")  %>%
+  mutate(PATID = gsub("_.*", "", PATID))
+
+gene_all <- baseline_genes %>%
+  full_join(., postvax_genes, by = "PATID") %>%
+  full_join(., delta_genes, by = "PATID") 
+
+clin_dat <- pData(baseline_eset) %>%
+  dplyr::select(PATID, treat, site, mal.vax.1, pfcsp_pre, pfcsp_post, log2FC_CSPAb)
+
+alldata_select <- alldata %>%
+  dplyr::select(PATID.OG, Timepoint, contains("FACS"), contains("CytokineObsConc")) %>%
+  dplyr::rename(PATID = PATID.OG) %>%
+  mutate(PATID = gsub("\\_.*", "", PATID)) %>%
+  pivot_wider(., id_cols = PATID, names_from = Timepoint, values_from = 3:ncol(.),names_sep = "_") %>%
+  select_if(~sum(!is.na(.)) > 0) %>% #remove columns with all NAs
+  # dplyr::select(PATID, contains("FACS_PfSPZ"), matches("(FACS.*25)"), matches("(FACS_PfSPZ-specific_CD3.*25)"),
+  #               matches("(FACS_CSP-specific.*25)"), contains("CytokineObsConc")) %>%
+  dplyr::select(PATID, contains("FACS_"), contains("CytokineObsConc")) %>%
+  dplyr::select(-c(contains("_of_TCRgd"))) %>% #remove redundant features (also represented by Vg9+Vd2+ of TCRgd)
+  dplyr::select(-c(contains("of_live_lymphocytes"))) %>% #remove redundant features (also represented by live_leukocytes)
+  dplyr::select(-c(contains("of_live_monocytes"))) %>% #remove redundant features (also represented by live_leukocytes)
+  dplyr::select(-c(contains("CSP-spec_"))) #remove redundant features (also represented by live_leukocytes)
+
+all_data_genes <- tte_data %>%
+  full_join(., clin_dat, by = "PATID") %>%
+  full_join(., alldata_select,  by = "PATID") %>%
+  full_join(., gene_all,  by = "PATID") %>%
+  mutate(treat = factor(treat, levels = c("Placebo", "4.5 x 10^5 PfSPZ", "9.0 x 10^5 PfSPZ", "1.8 x 10^6 PfSPZ"))) %>%
+  mutate(mal.vax.1 = factor(ifelse(mal.vax.1 == 0, "pfneg", "pfpos"))) %>%
+  mutate(site = factor(site))  %>%
+  dplyr::select(PATID, treat, site, tte.mal.atp.6, everything())
+```
+
+The following is applicable to baseline data only: columns that have a large percentage of zero values and a few high leverage points tend to show up as significant correlations downstream. To avoid this, remove columns that contain ~>66% zero values. Only certain cytokines fell into this category, and by thresholding, we were able to remove them and prevent 'false' correlations. 
+
+```{r remove columns with >66% zeros,  message=FALSE, warning=FALSE}
+ncol(all_data_genes)
+i <- colSums(all_data_genes == 0, na.rm=TRUE) < 0.66*nrow(all_data_genes)
+all_data_genes <- all_data_genes[i]
+ncol(all_data_genes)
+```
+
+```{r save all_data_btm, include=FALSE, echo=FALSE, eval=FALSE}
+#saveRDS(all_data_btm, paste0(datadir, "all_data_btm_for_tte6_correlations.rds"))
+```
+
+# Arrange expression data for pairwise correlations
+
+Low-annotation BTMs collapsed by median of all members chose in manuscript for all analyses. This method has been used in other systems vaccinology studies over other approaches such as eigenvalues (first principal component) or other measures of variance.
+
+Note here that we include baseline plasma cytokine data with the gene expression as this was not included in any prior analyses. 
+
+```{r sandbox check individual correlations, include=FALSE, echo=FALSE, eval=FALSE}
+foo <- all_data_genes %>%
+  dplyr::select(tte.mal.atp.6, contains("CSP"))
+Hmisc::rcorr(foo$tte.mal.atp.6, foo$`FACS_CSP-specific_memory_B_cells_of_live_leukocytes_0`, type  = "spearman")
+Hmisc::rcorr(foo$tte.mal.atp.6, foo$`FACS_CSP-specific_memory_B_cells_of_live_leukocytes_25`, type  = "spearman")
+```
+
+
+```{r arrange data to long format for linear model of the combined innate BTMs,  message=FALSE, warning=FALSE}
+all_gene_cor_dat <- all_data_genes %>%
+  dplyr::select(PATID, treat, site, mal.vax.1, tte.mal.atp.6, everything()) %>%
+  mutate(pfcsp_pre = log2(pfcsp_pre+1)) %>%
+   mutate(pfcsp_post = log2(pfcsp_post+1)) %>%
+  pivot_longer(., cols = 6:ncol(.), names_to = "feature", values_to = "value") %>%
+  mutate(feature = gsub("_0", "_baseline", feature)) %>% #recode 0 as baseline
+  mutate(feature = gsub("_25", "_postvax", feature)) %>% #recode 25 as postvax
+  mutate(feature = gsub("pfcsp_pre", "CSP-specific IgG_baseline", feature)) %>%
+  mutate(feature = gsub("pfcsp_post", "CSP-specific IgG_postvax", feature)) %>%
+  mutate(feature = gsub("log2FC_CSPAb", "CSP-specific IgG_delta", feature)) %>%
+  mutate(timepoint = "TBD") %>% #features are TBD until specified
+  mutate(timepoint = ifelse(grepl("baseline", feature), "baseline", timepoint)) %>% 
+  mutate(timepoint = ifelse(grepl("postvax", feature), "postvax", timepoint)) %>%
+  mutate(timepoint = ifelse(grepl("delta", feature), "delta", timepoint)) %>%
+  mutate(feature = gsub("_baseline", "", feature)) %>% #remove suffix
+  mutate(feature = gsub("_postvax", "", feature)) %>%
+  mutate(feature = gsub("_delta", "", feature)) %>%
+  pivot_wider(., names_from = timepoint, values_from = value) %>% #pivot to wide format
+  dplyr::select(PATID, treat, site, mal.vax.1, tte.mal.atp.6, feature, baseline, postvax, delta) %>%
+  mutate(delta = ifelse(grepl("FACS", feature), log2((postvax+1e-06)/(baseline+1e-06)), delta)) %>%
+  left_join(., all_fDat %>%
+              dplyr::rename(feature = "EnsemblID"),
+            by = "feature") %>%
+  mutate(feature = ifelse(grepl("ENSG", feature), GeneSymbol, feature)) %>%
+  dplyr::select(-GeneSymbol) %>%
+  group_by(PATID, treat, site, mal.vax.1, tte.mal.atp.6, feature) %>%
+  dplyr::summarize(baseline = median(baseline), postvax = median(postvax), delta = median(postvax)) %>%
+  ungroup()
+```
+
+```{r save all_gene_cor_dat, include=FALSE, echo=FALSE, eval=FALSE}
+# saveRDS(all_gene_cor_dat, file = paste0(datadir, "all_gene_cor_dat.rds"))
+#load from local path
+
+all_gene_cor_dat <- readRDS("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/all_gene_cor_dat.rds")
+```
+
+## Perform pairwise correlations between each feature and time to parasitemia and fold-change CSP-specific IgG, all dose groups combined
+
+```{r perform pairwise correlations tte}
+library(Hmisc)
+my_significance_thres <- 0.01
+flattenCorrMatrix <- function(nmat, cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    n = nmat[ut],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
+}
+
+all_gene_cor_dat_2 <- all_gene_cor_dat %>%
+  dplyr::select(PATID, treat, tte.mal.atp.6, feature, baseline, postvax, delta) %>%
+  pivot_longer(., cols = c(baseline, postvax, delta), names_to = "timepoint", values_to = "value") %>%
+  dplyr::select(PATID, timepoint, treat, tte.mal.atp.6, everything()) %>%
+  filter(!grepl("TBA", feature)) %>%
+  drop_na(value, tte.mal.atp.6) %>%
+  pivot_wider(., names_from = feature, values_from = value) %>%
+  mutate(timepoint = factor(timepoint, levels = c("baseline", "postvax", "delta"))) %>%
+  arrange(timepoint, treat, PATID)
+
+all_gene_cor_dat_CSP_IgG <- all_gene_cor_dat_2 %>%
+  dplyr::select(PATID, timepoint, treat, "CSP-specific IgG") %>%
+  pivot_wider(names_from = "timepoint", values_from = "CSP-specific IgG", names_prefix = "CSP_specific_IgG_")
+
+all_gene_cor_dat_2 <- all_gene_cor_dat_2 %>%
+  full_join(., all_gene_cor_dat_CSP_IgG, by = c("PATID", "treat")) %>%
+  dplyr::select(PATID, timepoint, treat, tte.mal.atp.6, contains("CSP_specific_IgG"), everything()) %>%
+  dplyr::select(-c("CSP-specific IgG", "CSP_specific_IgG_baseline", "CSP_specific_IgG_delta"))
+
+temp_df <- corres_list <- flatten_cormat_list <- sig_features_list <- significant_cormat_r <- significant_cormat_p <- significant_cormat_fdr <- c()
+significant_cormat_n <- significant_cormat_r_networkplot <- c()
+for(i in unique(all_gene_cor_dat_2$timepoint)){
+    temp_df <- all_gene_cor_dat_2 %>%
+      filter(timepoint == i) %>%
+      dplyr::select(-c(timepoint, treat)) %>%
+      column_to_rownames(var = "PATID") 
+    corres_list[[i]]$n <- rcorr(as.matrix(temp_df), type = "spearman")$n
+    corres_list[[i]]$r <- rcorr(as.matrix(temp_df), type = "spearman")$r
+    corres_list[[i]]$p <- rcorr(as.matrix(temp_df), type = "spearman")$P
+    corres_list[[i]]$fdr <- tabletools::rcorr_padjust(rcorr(as.matrix(temp_df), type = "spearman"), method = "BH")$P
+    corres_list[[i]]$flattened_cormat <- flattenCorrMatrix(corres_list[[i]]$n,
+                                                                corres_list[[i]]$r,
+                                                                corres_list[[i]]$p)
+    corres_list[[i]]$flattened_cormat$fdr <- p.adjust(corres_list[[i]]$flattened_cormat$p, method = "BH")
+    corres_list[[i]]$flattened_cormat <- corres_list[[i]]$flattened_cormat[complete.cases(corres_list[[i]]$flattened_cormat),]
+    flatten_cormat_list[[i]] <- corres_list[[i]]$flattened_cormat
+    sig_features_list[[i]] <- corres_list[[i]]$flattened_cormat %>%
+      filter(row == "tte.mal.atp.6" & fdr < my_significance_thres |
+               column == "tte.mal.atp.6" & fdr < my_significance_thres |
+               row == "CSP_specific_IgG_postvax" & fdr < my_significance_thres |
+               column == "CSP_specific_IgG_postvax" & fdr < my_significance_thres) %>%
+      dplyr::select(row, column, n, cor, p, fdr) %>%
+      dplyr::rename(feature1 = "row") %>%
+      dplyr::rename(feature2 = "column")
+      significant_features <- unique(c(sig_features_list[[i]]$feature1, sig_features_list[[i]]$feature2))
+      significant_cormat_r[[i]] <- corres_list[[i]]$r[significant_features, significant_features] #make downselected correlation matrix
+      significant_cormat_n[[i]] <- corres_list[[i]]$n[significant_features, significant_features] #make downselected sample size matrix
+      significant_cormat_p[[i]] <- corres_list[[i]]$p[significant_features, significant_features] #make downselected p value matrix
+      significant_cormat_fdr[[i]] <-  corres_list[[i]]$fdr[significant_features, significant_features] #make downselected fdr matrix
+      significant_cormat_r_networkplot[[i]] <- significant_cormat_r[[i]]
+      significant_cormat_r_networkplot[[i]][significant_cormat_fdr[[i]] >= my_significance_thres] <- 0 #for FDR >= threshold, set to 0
+    }
+
+#bind correlation dataframes
+all_cor_dfs <- bind_rows(flatten_cormat_list, .id = "timepoint") %>%
+  dplyr::select(timepoint, everything()) %>%
+  mutate(treat = factor(timepoint, levels = c("baseline", "postvax", "delta")))
+
+#bind signifificant features
+all_sig_features <- bind_rows(sig_features_list, .id = "timepoint") %>%
+  dplyr::select(timepoint, everything()) %>%
+  mutate(treat = factor(timepoint, levels = c("baseline", "postvax", "delta")))
+```
+
+Clean row and columns names to plot data as network plots
+
+```{r clean rows and columns}
+for(i in names(significant_cormat_r)){
+  #r
+  colnames(significant_cormat_r[[i]]) <- rownames(significant_cormat_r[[i]]) <- gsub("tte.mal.atp.6", "time to parasitemia",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_r[[i]]) <- rownames(significant_cormat_r[[i]]) <- gsub("CSP_specific_IgG_", "CSP-specific IgG_",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_r[[i]]) <- rownames(significant_cormat_r[[i]]) <- gsub("FACS_|_innate_BTM|_highBTM|_monaco|CytokineObsConc_", "",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_r[[i]]) <- rownames(significant_cormat_r[[i]]) <- gsub("_of_live_PBMCs", "",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_r[[i]]) <- rownames(significant_cormat_r[[i]]) <- gsub("_of_live_leukocytes", "",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_r[[i]]) <- rownames(significant_cormat_r[[i]]) <- gsub("PfSPZ", "Pf",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_r[[i]]) <- rownames(significant_cormat_r[[i]]) <- gsub("_", " ",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  
+  #network r
+  colnames(significant_cormat_r_networkplot[[i]]) <- rownames(significant_cormat_r_networkplot[[i]]) <- gsub("tte.mal.atp.6", "time to parasitemia",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_r_networkplot[[i]]) <- rownames(significant_cormat_r_networkplot[[i]]) <- gsub("CSP_specific_IgG_", "CSP-specific IgG_",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_r_networkplot[[i]]) <- rownames(significant_cormat_r_networkplot[[i]]) <- gsub("FACS_|_innate_BTM|_highBTM|_monaco|CytokineObsConc_", "",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_r_networkplot[[i]]) <- rownames(significant_cormat_r_networkplot[[i]]) <- gsub("_of_live_PBMCs", "",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_r_networkplot[[i]]) <- rownames(significant_cormat_r_networkplot[[i]]) <- gsub("_of_live_leukocytes", "",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_r_networkplot[[i]]) <- rownames(significant_cormat_r_networkplot[[i]]) <- gsub("PfSPZ", "Pf",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_r_networkplot[[i]]) <- rownames(significant_cormat_r_networkplot[[i]]) <- gsub("_", " ",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  
+  #fdr
+  colnames(significant_cormat_fdr[[i]]) <- rownames(significant_cormat_fdr[[i]]) <- gsub("tte.mal.atp.6", "time to parasitemia",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_fdr[[i]]) <- rownames(significant_cormat_fdr[[i]]) <- gsub("CSP_specific_IgG_", "CSP-specific IgG_",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_fdr[[i]]) <- rownames(significant_cormat_fdr[[i]]) <- gsub("FACS_|_innate_BTM|_highBTM|_monaco|CytokineObsConc_", "",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_fdr[[i]]) <- rownames(significant_cormat_fdr[[i]]) <- gsub("_of_live_PBMCs", "",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_fdr[[i]]) <- rownames(significant_cormat_fdr[[i]]) <- gsub("_of_live_leukocytes", "",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_fdr[[i]]) <- rownames(significant_cormat_fdr[[i]]) <- gsub("PfSPZ", "Pf",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  colnames(significant_cormat_fdr[[i]]) <- rownames(significant_cormat_fdr[[i]]) <- gsub("_", " ",
+                                                                                     rownames(significant_cormat_r[[i]]))
+  }
+```
+
+
+```{r arrange data to save for table, include=FALSE, echo=FALSE, eval=FALSE}
+tabdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Supplementary Tables JCI resubmission/"
+
+foo1 <- corres_list$baseline$flattened_cormat %>%
+  mutate(correlation_analysis_type = "gene-level, spearman") %>%
+  mutate(timepoint_for_features = "baseline")
+foo2 <- corres_list$postvax$flattened_cormat %>%
+  mutate(correlation_analysis_type = "gene-level, spearman") %>%
+  mutate(timepoint_for_features = "postvax")
+foo3 <- corres_list$delta$flattened_cormat %>%
+  mutate(correlation_analysis_type = "gene-level, spearman") %>%
+  mutate(timepoint_for_features = "delta")
+
+all_flattend_cormats <- bind_rows(foo1, foo2, foo3) %>%
+  dplyr::select(correlation_analysis_type, timepoint_for_features, everything()) %>%
+  mutate(row = gsub("tte.mal.atp.6", "time to parasitemia", row)) %>%  
+  mutate(column = gsub("tte.mal.atp.6", "time to parasitemia", column)) %>%
+  filter(fdr<0.10) %>%
+  filter(row %in% c("time to parasitemia", "CSP_specific_IgG_postvax") |
+           column %in% c("time to parasitemia", "CSP_specific_IgG_postvax")) %>%
+  arrange(timepoint_for_features, fdr, desc(cor), row, column)
+
+writexl::write_xlsx(list(gene_level = all_flattend_cormats), path = paste0(tabdir, "Table S5 Spearman correlations between gene-level transcriptomic data, non-transcriptomic features and time to parasitemia.xlsx"))
+```
+
+### Plot correlation matrix, all dose groups
+
+Only show features that significantly correlate with either time to parasitemia or log-fold-change CSP-specific IgG
+
+```{r plot all dose group cormat}
+library(corrr)
+min_cor <- 0.1
+tl.cex <- 7.5
+lab_size <- 1.5
+
+my_signif_cormat_alldose_baseline <- ggcorrplot(corr = significant_cormat_r$baseline,
+                                                method = "square",
+                                                hc.order = FALSE,
+                                                hc.method = "ward.D2",
+                                                outline.col = "white",
+                                                ggtheme = ggplot2::theme_minimal(),
+                                                colors = c("darkblue", "white", "darkred"),
+                                                type = "lower",
+                                                sig.level = my_significance_thres,
+                                                p.mat = significant_cormat_fdr$baseline,
+                                                insig = "blank",
+                                                lab = "true",
+                                                tl.cex = tl.cex,
+                                                lab_size = lab_size)
+
+my_signif_networkplot_alldose_baseline <- network_plot(significant_cormat_r_networkplot$baseline, 
+                                legend = "full",
+                                colors = c("darkblue", "white", "darkred"),
+                                min_cor = min_cor,
+                                curved = TRUE)
+
+my_signif_cormat_alldose_postvax <- ggcorrplot(corr = significant_cormat_r$postvax,
+                                                method = "square",
+                                                hc.order = FALSE,
+                                                hc.method = "ward.D2",
+                                                outline.col = "white",
+                                                ggtheme = ggplot2::theme_minimal(),
+                                                colors = c("darkblue", "white", "darkred"),
+                                                type = "lower",
+                                                sig.level = my_significance_thres,
+                                                p.mat = significant_cormat_fdr$postvax,
+                                                insig = "blank",
+                                                lab = "true",
+                                                tl.cex = tl.cex,
+                                                lab_size = lab_size)
+
+my_signif_networkplot_alldose_postvax <- network_plot(significant_cormat_r_networkplot$postvax, 
+                                legend = "full",
+                                colors = c("darkblue", "white", "darkred"),
+                                min_cor = min_cor,
+                                curved = TRUE)
+
+
+my_signif_cormat_alldose_delta <- ggcorrplot(corr = significant_cormat_r$delta,
+                                                method = "square",
+                                                hc.order = FALSE,
+                                                hc.method = "ward.D2",
+                                                outline.col = "white",
+                                                ggtheme = ggplot2::theme_minimal(),
+                                                colors = c("darkblue", "white", "darkred"),
+                                                type = "lower",
+                                                sig.level = my_significance_thres,
+                                                p.mat = significant_cormat_fdr$delta,
+                                                insig = "blank",
+                                                lab = "true",
+                                                tl.cex = tl.cex,
+                                                lab_size = lab_size)
+
+my_signif_networkplot_alldose_delta <- network_plot(significant_cormat_r_networkplot$delta, 
+                                legend = "full",
+                                colors = c("darkblue", "white", "darkred"),
+                                min_cor = min_cor,
+                                curved = TRUE)
+```
+
+### Correlation matrices (corresponds to Figure S6A)
+
+```{r cormat plots, fig.align='center', fig.width=14, fig.height=20}
+ggarrange(my_signif_cormat_alldose_baseline, my_signif_cormat_alldose_postvax, my_signif_cormat_alldose_delta,
+          common.legend = TRUE, align = "hv",
+          nrow=3,
+          heights = c(1.2,4,4))
+```
+
+### Network plots
+
+This was not included in the manuscript.
+
+```{r network plots, fig.align='center', fig.width=16, fig.height=8}
+ggarrange(my_signif_networkplot_alldose_baseline, my_signif_networkplot_alldose_postvax, my_signif_networkplot_alldose_delta,
+          common.legend = TRUE, align = "hv",
+          nrow=1,
+          widths = c(1,1.27,1.27))
+```
+```{r save corrplots, eval=FALSE, echo=FALSE, include=FALSE}
+pdf(file = paste0(figdir, "Figure 5A Corrplot gene-level all doses all timepoints FDR", my_significance_thres*100,".pdf"), height = 9, width = 29)
+ggarrange(my_signif_cormat_alldose_baseline, my_signif_cormat_alldose_postvax, my_signif_cormat_alldose_delta,
+          common.legend = TRUE, align = "hv",
+          nrow=1,
+          widths = c(1,4,4))
+dev.off()
+
+pdf(file = paste0(figdir, "Figure 5A networkplot gene-level all doses all timepoints FDR", my_significance_thres*100,".pdf"), height = 6, width = 18)
+ggarrange(my_signif_networkplot_alldose_baseline, my_signif_networkplot_alldose_postvax, my_signif_networkplot_alldose_delta,
+          common.legend = TRUE, align = "hv",
+          nrow=1,
+          widths = c(1,1.27,1.27))
+dev.off()
+```
+
+```{r scatter plots csp igg post, eval=FALSE, echo=FALSE, include=FALSE}
+## Check individual correlations by scatter plots
+my_features <- c("LINC02520", "PLEKHA6")
+
+csp_igg_postvax <-  all_gene_cor_dat %>%
+  dplyr::select(PATID, feature, postvax) %>%
+  filter(feature == "CSP-specific IgG") %>%
+  mutate(csp_igg_post = postvax) %>%
+  dplyr::select(PATID, csp_igg_post)
+
+foo <- all_gene_cor_dat %>%
+  left_join(., csp_igg_postvax, by = "PATID") %>%
+  filter(feature %in% my_features)
+
+
+foo %>%
+  ggscatter(., x = "csp_igg_post", y = "baseline", cor.coef = TRUE,
+          add = "reg.line",
+          add.params = list(color = "blue", fill = "lightgray"),
+          cor.coeff.args = list(method = "spearman")) +
+  facet_wrap(~feature)
+```
+
+```{r scatter plots tte mal atp 6, eval=FALSE, echo=FALSE, include=FALSE}
+my_features <- c("IRF6")
+
+csp_igg_postvax <-  all_gene_cor_dat %>%
+  dplyr::select(PATID, feature, postvax) %>%
+  filter(feature == "CSP-specific IgG") %>%
+  mutate(csp_igg_post = postvax) %>%
+  dplyr::select(PATID, csp_igg_post)
+
+foo <- all_gene_cor_dat %>%
+  left_join(., csp_igg_postvax, by = "PATID") %>%
+  filter(feature %in% my_features)
+
+
+foo %>%
+  ggscatter(., x = "tte.mal.atp.6", y = "baseline", cor.coef = TRUE,
+          add = "reg.line",
+          add.params = list(color = "blue", fill = "lightgray"),
+          cor.coeff.args = list(method = "spearman")) +
+  facet_wrap(~feature)
+```
