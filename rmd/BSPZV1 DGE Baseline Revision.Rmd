@@ -46,7 +46,7 @@ meta_dat <- read.delim(paste0(datadir, "GSE196126_series_matrix.txt"), skip=29, 
   mutate(temp_rownames = Sample_ID) %>%
   dplyr::rename(Outcome = "Sample_characteristics_ch1.2") %>%
   left_join(., csp_ab_dat, by = "Subject_ID") %>%
-  dplyr::select(temp_rownames, Sample_ID, Subject_ID, timepoint, Sample_longname, Outcome, CSP_titer_baseline, CSP_titer_2wks_postvax, CSP_titer_ratio, everything()) %>%
+  dplyr::select(temp_rownames, Sample_ID, Subject_ID, regimen, timepoint, Sample_longname, Outcome, CSP_titer_baseline, CSP_titer_2wks_postvax, CSP_titer_ratio, everything()) %>%
   mutate(Outcome = gsub("protection\\: ", "", Outcome)) %>%
   column_to_rownames(var = "temp_rownames")
 
@@ -162,12 +162,13 @@ y <- calcNormFactors(y)	#Normalization
 Subject <- factor(y$samples$Subject_ID)
 Outcome <- factor(y$samples$Outcome, levels = c("NP","P"))
 CSP_Ab <- y$samples$CSP_titer_baseline
-design <- model.matrix(~0 + CSP_Ab + Outcome)
+Regimen <- factor(y$samples$regimen)
+design <- model.matrix(~Regimen + CSP_Ab + Outcome)
 rownames(design) <- y$samples$Subject_ID
 colnames(design)
 y     <- estimateDisp(y,design, robust = TRUE)
 fit   <- glmQLFit(y, design, robust = TRUE)
-qlf <- glmQLFTest(fit, contrast = c(rep(0, ncol(design)-2), -1, 1))
+qlf <- glmQLFTest(fit, contrast = c(rep(0, ncol(design)-1), 1))
 degtab <- topTags(qlf, n = nrow(y))$table
 ```
 
@@ -181,6 +182,21 @@ degtab <- topTags(qlf, n = nrow(y))$table
 degtab %>%
   dplyr::select(gene_symbol, logFC, PValue, FDR) %>%
   head(., n=15)
+```
+
+```{r write BSPZV1 toptab to file, echo=FALSE, eval=FALSE, include=FALSE}
+## Write TopTab table to file
+FDR.cutoff <- 1
+write.csv(degtab, paste0(datadir,"PfSPZ_edgeR_DGE", "_",
+                         "P_v_S_BSPZV1_",
+                         "FDR",
+                         FDR.cutoff*100,"_",
+                         ncol(y),"x",nrow(y),"_sex_adj.csv"), row.names = FALSE)
+writexl::write_xlsx(degtab, paste0(datadir,"PfSPZ_edgeR_DGE", "_",
+                                   "P_v_S_BSPZV1_",
+                                   "FDR",
+                                   FDR.cutoff*100,"_",
+                                   ncol(y),"x",nrow(y),"_sex_adj.xlsx"))
 ```
 
 ### Competive Gene Set Testing between Protected vs Not Protected using CAMERA

@@ -1,0 +1,1053 @@
+---
+title: "KSPZV1 Correlate Cellular and CSP IgG Features to Time to Parasitemia through 6 months - revised"
+author: "Tuan M. Tran"
+date: "09/25/2023"
+output: html_document
+---
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(knitr)
+library(tidyverse)
+library(googledrive)
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(fgsea)
+library(data.table)
+library(Biobase)
+#set parallel backend.  
+library(parallel)
+library(parallelMap)
+parallelStartSocket(cpus = detectCores())
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Objective
+
+Plot correlations between adaptive features (both baseline and post-vax) and time to first Pf infection through 6 months of surveillance post-vaccination.
+
+### Load data
+
+```{r load data local, include=FALSE, message=FALSE, warning=FALSE}
+#local path: "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 Summarized Correlations Features TTE 6 months.rds"
+FACS_TTE_longdat <- readRDS("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KPSZV1_FACS_Time2Parasitemia_LongDat.rds")
+```
+
+```{r load data gdrive, message=FALSE, warning=FALSE}
+#from google drive
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1O0hONM1be04wxcTZ2qUyn1tIBo1qw0CH"), path = temp, overwrite = TRUE)
+FACS_TTE_longdat <- readRDS(file = dl$local_path)
+```
+
+```{r sandbox check individual correlations, include=FALSE, eval=FALSE, echo=FALSE}
+foo <- FACS_TTE_longdat %>%
+  filter(grepl("CSP-spec", feature)) %>%
+  dplyr::select(dummy_index_id, tte.mal.atp.6, feature, Post_Vaccination) %>%
+  pivot_wider(., id_cols = c(dummy_index_id, tte.mal.atp.6), names_from = feature, values_from = Post_Vaccination)
+
+Hmisc::rcorr(foo$tte.mal.atp.6, foo$`CSP-specific of B cells`, type = "spearman")
+Hmisc::rcorr(foo$tte.mal.atp.6, foo$`CSP-specific of memory B cells`, type = "spearman")
+```
+
+```{r readin all_data_btm_for_tte6_correlations}
+#from google drive
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1P21cG9h4KJyZiJtExIMTXcxVQwfWkMxQ"), path = temp, overwrite = TRUE)
+all_data_btm_for_tte6_correlations <- readRDS(file = dl$local_path)
+
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1P4t1gpEhGt2dYx13jofcTjyAgx0I3dic"), path = temp, overwrite = TRUE)
+three_month_outcome <- readRDS(file = dl$local_path)
+
+pheno_dat <- all_data_btm_for_tte6_correlations  %>%
+  full_join(., three_month_outcome, by = "PATID") %>%
+  dplyr::select(PATID, treat, site, outcome, mal.atp.3, tte.mal.atp.6, mal.vax.1)
+                
+CSP_Ab_dat <- all_data_btm_for_tte6_correlations %>%
+  dplyr::select(PATID, pfcsp_pre, pfcsp_post, log2FC_CSPAb) %>%
+  dplyr::rename(CSPspecific_IgG_baseline = "pfcsp_pre",
+                CSPspecific_IgG_postvax = "pfcsp_post",
+                CSPspecific_IgG_delta = "log2FC_CSPAb") %>%
+  pivot_longer(., cols = contains("CSP"), names_to = "feature", values_to = "value") %>%
+  mutate(timepoint = gsub(".*IgG\\_", "", feature)) %>%
+  mutate(feature = sub("_[^_]+$", "", feature)) %>%
+  dplyr::select(PATID, feature, timepoint, value)
+
+FACS_dat <- all_data_btm_for_tte6_correlations %>%
+  dplyr::select(PATID, contains("FACS")) %>%
+  pivot_longer(., cols = contains("FACS"), names_to = "feature", values_to = "value") %>%
+  mutate(timepoint = gsub("(.*_\\s*(.*$))", "\\2", feature))  %>%
+  mutate(feature = sub("_[^_]+$", "", feature)) %>%
+  mutate(timepoint = ifelse(timepoint == 0, "baseline", "postvax")) %>%
+  pivot_wider(names_from = timepoint, values_from = value) %>%
+  mutate(delta = log2((postvax+1e-06)/(baseline+1e-06))) %>%
+  pivot_longer(., cols = c(baseline, postvax, delta), names_to = "timepoint", values_to = "value")
+
+all_cor_dat <- pheno_dat %>%
+  full_join(., bind_rows(CSP_Ab_dat, FACS_dat),
+            by = "PATID")
+```
+
+```{r prepare summarize correlations, warning=FALSE}
+followuptime <- 6
+myCorMeth <- "spearman"
+
+summarized_correlations <- all_cor_dat %>%
+  group_by(feature, timepoint) %>%
+  summarise(spearman_r = stats::cor.test(tte.mal.atp.6, value, method = myCorMeth)$estimate,
+            spearman_p = stats::cor.test(tte.mal.atp.6, value, method = myCorMeth)$p.val) %>%
+  ungroup() %>%
+  group_by(timepoint) %>%
+  mutate(spearman_fdr = p.adjust(spearman_p, method = "BH")) %>%
+  ungroup() 
+
+corr_plot_dat <- summarized_correlations %>%
+  mutate(feature = gsub("FACS_", "", feature)) %>% #clean up names
+  mutate(feature = gsub("CSPspecific", "CSP-specific", feature)) %>%
+  mutate(feature = gsub("_of_live_leukocytes","", feature)) %>%
+  mutate(feature = gsub("_", " ", feature)) %>%
+  mutate(neglogpval = -log10(spearman_p)) %>%
+  mutate(neglogfdr = -log10(spearman_fdr)) %>%
+  mutate(is_significant = ifelse(spearman_fdr <0.05, "significant", "ns")) %>%
+  mutate(label = ifelse(spearman_p < 0.05, feature, "")) %>%
+  mutate(timepoint = factor(timepoint, levels = c("baseline", "postvax", "delta"), labels = c("baseline","2 weeks post-vax","log2 fold-change"))) %>%
+  mutate(color = ifelse(timepoint=="baseline", "blue", "tbd")) %>%
+  mutate(color = ifelse(timepoint=="2 weeks post-vax", "red", color)) %>%
+  mutate(color = ifelse(timepoint=="log2 fold-change", "purple", color)) %>%
+  mutate(color = ifelse(is_significant=="ns", "gray", color)) %>%
+  mutate(timepoint2 = ifelse(is_significant=="ns", "not significant", as.character(timepoint))) %>%
+  mutate(timepoint2 = factor(timepoint2, levels = c("baseline", "2 weeks post-vax", "log2 fold-change","not significant"), labels = c("baseline","2 weeks post-vax","log2 fold-change", "not significant"))) 
+```
+
+### CSP IgG reactivity at baseline and post-vax by treatment and outcome (Fig 3D of revised manuscript)
+
+```{r, volcano plot, echo=TRUE, warning=FALSE, message=FALSE}
+cols <- c("baseline" = "blue", "2 weeks post-vax" = "red", "log2 fold-change" = "orange")
+cols2 <- c("baseline" = "blue", "2 weeks post-vax" = "red", "log2 fold-change" = "orange", "not significant" = "gray")
+myPlot <- ggplot(corr_plot_dat, aes(x = spearman_r, y = neglogfdr, fill = timepoint2, color = timepoint, label = label)) +
+  geom_point(shape = 21, alpha = 0.75, size = 2) +
+  geom_hline(yintercept = 1.3, linetype = "dotted", color = "red", alpha = 0.7) +
+  xlim(c(-0.4,0.4)) +
+  ggrepel::geom_text_repel(aes(label=label),hjust=0, vjust=0, color = "black", force = 5, force_pull = 10, size = 3.25, segment.size = 0.2) +
+  scale_color_manual(values = cols, aesthetics = "colour") +
+  scale_fill_manual(values = cols2, aesthetics = "fill") +
+  theme_bw(base_family = "sans", base_size = 14) +
+  ylab("-log10(FDR)") +
+  xlab("Spearman's rho") +
+  theme(legend.position = "top", legend.box="vertical", legend.margin=margin()) +
+  guides(colour = guide_legend(nrow = 1),
+         fill = guide_legend(nrow = 1)) +
+  theme(legend.title=element_blank(),
+        axis.text = element_text(colour = "black"),
+        axis.title = element_text(color = "black"))
+```
+
+Volcano plot of CSP-specific IgG and flow cytometry features at each timepoint or calculated as fold-change
+post-vaccination over baseline. Red dashed line indicates P = 0.05.
+
+```{r, print volcano plot, echo=FALSE, fig.align='center', fig.width=6.5, fig.height=6, message=FALSE, warning=FALSE}
+print(myPlot)
+```
+```{r, save volcano plot, echo=FALSE, include = FALSE, eval=FALSE, fig.align='center', fig.width=6.5, fig.height=6, message=FALSE, warning=FALSE}
+figdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Working Figures/"
+pdf(paste0(figdir, "Fig 4A Spearman FACS vs Time to Parasitemia 6 months Volcano Plot Revised FDR.pdf"), width = 5, height=5)
+myPlot
+dev.off()
+```
+
+Table of significant correlations
+
+```{r plot significant correlations}
+summarized_correlations_select <- summarized_correlations %>%
+  dplyr::select(feature, timepoint, spearman_r, spearman_p, spearman_fdr) %>%
+  filter(spearman_fdr<0.05) %>%
+  arrange(desc(abs(spearman_r)))
+
+summarized_correlations_select %>%
+  knitr::kable()
+```
+### Show correlation between CSP-specific memory B cells and Vδ2 γδ T cells with time-to-first parasitemia up to 6 months as scatter plot (Fig 3B of revised manuscript)
+
+Correlation between CSP-specific memory B cells and time-to-first parasitemia up to 6 months (n=183) by presence (not protected, NP) or absence (protected, P) of parasitemia through 3 months of follow up
+
+```{r plot CSP-specific of memory B cells vs TTE 6 months, message=FALSE, warning=TRUE}
+#local path: "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 PhenoData TTE 6 months Long Format.rds"
+myCorMeth <- "spearman"
+wrap_length <- 25
+
+CSP_MBC_postvax_cordat <- all_cor_dat %>%
+  filter(feature == "FACS_CSP-specific_memory_B_cells_of_live_leukocytes" & timepoint == "postvax") %>%
+  filter(!is.na(tte.mal.atp.6)) %>%
+  filter(!is.na(value))
+
+CSP_IgG_postvax_cordat <- all_cor_dat %>%
+  filter(feature == "CSPspecific_IgG" & timepoint == "postvax") %>%
+  filter(!is.na(tte.mal.atp.6)) %>%
+  filter(!is.na(value))
+
+CSP_MBC_TTE_plot <- ggscatter(CSP_MBC_postvax_cordat, x = "tte.mal.atp.6", y = "value",
+            conf.int = TRUE , add = "reg.line", size = 1,
+            cor.coef.size = 1.5,
+            add.params = list(color = "black", fill = "lightgray", alpha = 0.4, size = 1),
+            fill = "outcome", color = "outcome") +
+  stat_cor(method = myCorMeth,  r.accuracy = 0.001) +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  xlab("days to first parasitemia") +
+  ylab(str_wrap("CSP-specific memory B cells of live PBMCs (post-vax)",wrap_length)) +
+  theme_bw(base_family = "sans", base_size = 9) +
+  theme(legend.position="top")  +
+  theme(legend.title=element_blank(),
+        axis.text = element_text(colour = "black"),
+        axis.title = element_text(color = "black"))
+
+CSP_IgG_TTE_plot <- CSP_IgG_postvax_cordat %>%
+  mutate(log10_CSP = log10(value+1)) %>%
+  ggscatter(., x = "tte.mal.atp.6", y = "log10_CSP",
+            conf.int = TRUE , add = "reg.line", size = 2,
+            cor.coef.size = 1.5,
+            add.params = list(color = "black", fill = "lightgray", alpha = 0.4, size = 1),
+            fill = "outcome", color = "outcome") +
+  stat_cor(method = myCorMeth,  r.accuracy = 0.001) +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  scale_color_manual(values = c("#A6CEE3", "#1F78B4")) +
+  xlab("days to first parasitemia") +
+  ylab(str_wrap("log10 CSP-specific IgG (post-vax)",wrap_length)) +
+  theme_bw(base_family = "sans", base_size = 9) +
+  theme(legend.position="top")  +
+  theme(legend.title=element_blank(),
+        axis.text = element_text(colour = "black"),
+        axis.title = element_text(color = "black"))
+```
+
+```{r view scatter plot, echo=FALSE, fig.align='center', fig.width=12, fig.height=4, message=FALSE, warning=FALSE}
+ggarrange(CSP_IgG_TTE_plot, CSP_MBC_TTE_plot, common.legend = TRUE, nrow=1,  align = "v")
+```
+
+```{r save scatter plot, echo=FALSE, fig.align='center', fig.width=12, fig.height=4, message=FALSE, warning=FALSE, include=FALSE, echo=FALSE, eval=FALSE}
+pdf(paste0(figdir, "Figure 3B Revised Scatter Plots Spearman CSP IgG CSP MBC vs TTE.pdf"), height = 6, width=3)
+ggarrange(CSP_IgG_TTE_plot, CSP_MBC_TTE_plot, common.legend = TRUE, nrow=2,  align = "v")
+dev.off()
+
+pdf(paste0(figdir, "Figure 3B Revised Scatter Plots Spearman CSP IgG only vs TTE.pdf"), height = 2, width=2.5)
+CSP_MBC_TTE_plot
+dev.off()
+```
+
+### Correlate Baseline with CSP-specific memory B cells
+
+```{r read in cpm data local, warning=FALSE, message=FALSE, echo=FALSE, eval=FALSE, include=FALSE}
+#local file: "PfSPZ_cpm_ExpressionSet_244x21815_AllGroups_bothBatches_0_rmBatchFX_06082021_TMT_logTRUE.rds"
+#local path: "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 logCPM expression sets for visualization/PfSPZ_cpm_ExpressionSet_244x21815_AllGroups_bothBatches_0_rmBatchFX_06082021_TMT_logTRUE.rds"
+```
+
+```{r read in cpm data googledrive, warning=FALSE, message=FALSE}
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1togaBlNIxiDj16FyXTC-r7Qw0A9cG2az"), path = temp, overwrite = TRUE)
+x  <- readRDS(file = dl$local_path)
+```
+
+```{r correlate baseline genes with CSP-specific IgG MBC and Vd2 gd T cells, message=FALSE, warning=FALSE}
+myCorMeth <- "spearman"
+
+csp.memoryB.dat <- CSP_MBC_postvax_cordat %>%
+  dplyr::select(PATID, treat, outcome, feature, timepoint, value) %>%
+  dplyr::filter(feature == "FACS_CSP-specific_memory_B_cells_of_live_leukocytes" & timepoint == "postvax")
+
+cpm.dat <- exprs(x) %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "SAMPLEID") %>%
+  dplyr::filter(grepl("_0", SAMPLEID)) %>%
+  mutate(PATID = gsub("_0", "", SAMPLEID)) %>%
+  dplyr::select(PATID, everything()) %>%
+  dplyr::select(-c(SAMPLEID)) %>%
+  pivot_longer(cols = 2:ncol(.), names_to = "EnsemblID", values_to = "CPM") %>%
+  left_join(., fData(x) %>%
+               dplyr::select(EnsemblID, GeneSymbol),
+             by = "EnsemblID")
+
+cpm.dat.csp.mbc <- csp.memoryB.dat %>%
+  left_join(., cpm.dat,
+            by = "PATID")
+
+summarized_cpm_feature <- cpm.dat.csp.mbc %>%
+  dplyr::select(PATID, treat, outcome, feature, GeneSymbol, EnsemblID, CPM, value) %>%
+  drop_na(CPM, value) %>%
+  arrange(PATID, feature, GeneSymbol, EnsemblID) %>%
+  group_by(GeneSymbol, EnsemblID) %>%
+  summarise(baselineCPM_spearman_r = stats::cor.test(CPM, value, method = myCorMeth)$estimate,
+            baselineCPM_spearman_p = stats::cor.test(CPM, value, method = myCorMeth)$p.value,
+            n = n()) %>%
+  ungroup() %>%
+  mutate(baselineCPM_spearman_fdr = p.adjust(baselineCPM_spearman_p, method = "BH")) %>%
+  mutate(rankMetric_CSP_MBC = sign(baselineCPM_spearman_r)*-(log10(baselineCPM_spearman_p)))
+```
+
+```{r save summarized_cpm_feature_CSP_MBC, include=FALSE, echo=FALSE, eval=FALSE}
+saveRDS(summarized_cpm_feature, "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/summarized_cpm_feature_CSP_MBC_n150.rds")
+```
+
+### Apply GSEA to all
+
+```{r apply fgsea to all, warning=FALSE, message=FALSE}
+ranklist <- summarized_cpm_feature %>%
+  dplyr::select(GeneSymbol, rankMetric_CSP_MBC) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  dplyr::summarize(rankMetric_CSP_MBC = mean(rankMetric_CSP_MBC)) %>%
+  arrange(desc(rankMetric_CSP_MBC)) %>%
+  deframe()
+
+devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/NamedGeneRankList2GseaTable.R?raw=TRUE")
+GSEA_CPM_ranked_CSP_MBC_all <- NamedGeneRankList2GseaTable(rankedgenes = ranklist, geneset = "all", output_directory = tempdir(), filename_prefix =
+                                                 "GSEA_baseline_CPM_CSP_MBC_all_n150", minSize = 20, fixed_seed = TRUE)
+
+closeAllConnections()
+```
+
+### Plot GSEA results as bar plot (Fig 3C of manuscript)
+
+Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and % CSP-specific memory B cells at 2-weeks post-vaccination.
+
+```{r arrange data for plots, echo = FALSE}
+myfunction <- function(leadingEdge) { length(unlist(strsplit(leadingEdge, ", "))) }
+myFDRcutoff <- 0.01
+
+myModules <- c("MonacoModules", "lowBTMs")
+myGSEAClusterPlotDat <- GSEA_CPM_ranked_CSP_MBC_all %>%
+  filter(padj < myFDRcutoff) %>%
+  filter(module_type %in% myModules) %>%
+  dplyr::mutate(edges = purrr::pmap_dbl(list(leadingEdge), myfunction)) %>%
+  dplyr::mutate(bubblelabel = paste(edges,size, sep = "/")) %>%
+  group_by(module_type) %>%
+    arrange(module_type, desc(NES), padj) %>%
+    dplyr::select(module_type, pathway, edges, size, bubblelabel, NES, padj) %>%
+  ungroup() %>%
+  filter(!grepl("TBA", pathway)) %>%
+  #mutate(pathway = gsub("gd", "γδ", pathway)) %>%
+  #mutate(pathway = gsub("Vd2", "Vδ2", pathway)) %>%
+  #mutate(pathway = gsub("Vg", "Vγ", pathway)) %>%
+  mutate(pathway = gsub("HALLMARK_", "", pathway)) %>%
+  mutate(pathway = gsub("_", " ", pathway)) %>%
+  mutate(neglogpadj = -log10(padj)) %>%
+  arrange(neglogpadj) %>%
+  mutate(pathway = fct_reorder(pathway, NES, .desc=TRUE)) %>%
+  mutate(pathway = fct_reorder(pathway, neglogpadj)) %>%
+  mutate(TextLabelColor = ifelse(module_type == "lowBTMs", scales::muted("red"),
+                                        ifelse(module_type == "MonacoModules", "black","orange"))) %>%
+  arrange(desc(neglogpadj))
+myColors <- rev(myGSEAClusterPlotDat$TextLabelColor)
+myGSEAClusterPlot <- myGSEAClusterPlotDat %>%
+  ggplot(., aes(x = NES, y = pathway, fill = neglogpadj)) +
+  geom_bar(stat = 'identity') + 
+  viridis::scale_fill_viridis(option= "A", begin = 0.25, end = 0.75, alpha = 0.8, direction = -1, name = "neglogpadj") +
+  theme_classic(base_family = "sans", base_size = 14) +
+  theme(legend.position = "bottom", axis.text.y = element_text(colour = myColors))
+```
+
+```{r print GSEA plot, fig.align='center', fig.height=6, fig.width=6, echo=FALSE}
+addSmallLegend <- function(myPlot, pointSize = 6, textSize = 6, spaceLegend = 1) {
+    myPlot +
+        guides(shape = guide_legend(override.aes = list(size = pointSize)),
+               color = guide_legend(override.aes = list(size = pointSize))) +
+        theme(legend.title = element_text(size = textSize), 
+              legend.text  = element_text(size = textSize),
+              legend.key.size = unit(spaceLegend, "lines"))
+}
+print(addSmallLegend(myGSEAClusterPlot))
+```
+
+```{r save gsea plot CSP MBC}
+pdf(paste0(figdir, "Figure 3C GSEA CSP MBC barplot JCI Revised.pdf"), width=5, height = 5)
+print(addSmallLegend(myGSEAClusterPlot))
+dev.off()
+```
+
+### Apply GSEA to Placebo
+
+```{r apply fgsea, warning=FALSE, message=FALSE}
+res_list <- list(NULL, NULL, NULL, NULL)
+names(res_list) <- c("CSP_IgG", "CSP_MBC", "Vd2", "TTE6")
+
+res_list$CSP_IgG <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "Placebo") %>%
+  dplyr::select(GeneSymbol, RankMetric_CSP_IgG) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_CSP_IgG = mean(RankMetric_CSP_IgG)) %>%
+  arrange(desc(RankMetric_CSP_IgG)) %>%
+  deframe()
+
+res_list$CSP_MBC <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "Placebo") %>%
+  dplyr::select(GeneSymbol, RankMetric_CSP_MBC) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_CSP_MBC = mean(RankMetric_CSP_MBC)) %>%
+  arrange(desc(RankMetric_CSP_MBC)) %>%
+  deframe()
+
+res_list$Vd2 <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "Placebo") %>%
+  dplyr::select(GeneSymbol, RankMetric_vd2) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_vd2 = mean(RankMetric_vd2)) %>%
+  arrange(desc(RankMetric_vd2)) %>%
+  deframe()
+
+res_list$TTE6 <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "Placebo") %>%
+  dplyr::select(GeneSymbol, RankMetric_TTE6) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_TTE6 = mean(RankMetric_TTE6)) %>%
+  arrange(desc(RankMetric_TTE6)) %>%
+  deframe()
+
+devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/NamedGeneRankList2GseaTable.R?raw=TRUE")
+placebo_bound_df_GSEA <- c()
+for(i in names(res_list)){
+  placebo_bound_df_GSEA[[i]] <- NamedGeneRankList2GseaTable(rankedgenes = res_list[[i]], geneset = "all", output_directory = tempdir(), filename_prefix =
+                                                 "GSEA_baseline_CPM_CSP_IgG_CSP_MBC_Vd2_TTE_Placebo", minSize = 20, fixed_seed = TRUE)
+  
+}
+closeAllConnections()
+```
+
+```{r save placebo_bound_df_GSEA, echo=FALSE, eval=FALSE, include=FALSE}
+saveRDS(placebo_bound_df_GSEA, "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/placebo_bound_df_GSEA_kendall.rds")
+```
+
+### Apply GSEA to low-dose PfSPZ
+
+```{r apply fgsea low-dose PfSPZ, warning=FALSE, message=FALSE}
+res_list <- list(NULL, NULL, NULL, NULL)
+names(res_list) <- c("CSP_IgG", "CSP_MBC", "Vd2", "TTE6")
+
+res_list$CSP_IgG <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "4.5 x 10^5 PfSPZ") %>%
+  dplyr::select(GeneSymbol, RankMetric_CSP_IgG) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_CSP_IgG = mean(RankMetric_CSP_IgG)) %>%
+  arrange(desc(RankMetric_CSP_IgG)) %>%
+  deframe()
+
+res_list$CSP_MBC <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "4.5 x 10^5 PfSPZ") %>%
+  dplyr::select(GeneSymbol, RankMetric_CSP_MBC) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_CSP_MBC = mean(RankMetric_CSP_MBC)) %>%
+  arrange(desc(RankMetric_CSP_MBC)) %>%
+  deframe()
+
+res_list$Vd2 <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "4.5 x 10^5 PfSPZ") %>%
+  dplyr::select(GeneSymbol, RankMetric_vd2) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_vd2 = mean(RankMetric_vd2)) %>%
+  arrange(desc(RankMetric_vd2)) %>%
+  deframe()
+
+res_list$TTE6 <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "4.5 x 10^5 PfSPZ") %>%
+  dplyr::select(GeneSymbol, RankMetric_TTE6) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_TTE6 = mean(RankMetric_TTE6)) %>%
+  arrange(desc(RankMetric_TTE6)) %>%
+  deframe()
+
+devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/NamedGeneRankList2GseaTable.R?raw=TRUE")
+lowdose_PfSPZ_bound_df_GSEA <- c()
+for(i in names(res_list)){
+  lowdose_PfSPZ_bound_df_GSEA[[i]] <- NamedGeneRankList2GseaTable(rankedgenes = res_list[[i]], geneset = "all", output_directory = tempdir(), filename_prefix =
+                                                 "GSEA_baseline_CSP_IgG_CSP_MBC_Vd2_TTE_low_dose_PfSPZ", minSize = 20, fixed_seed = TRUE)
+  
+}
+closeAllConnections()
+```
+
+```{r save lowdose_PfSPZ_bound_df_GSEA, echo=FALSE, eval=FALSE, include=FALSE}
+saveRDS(lowdose_PfSPZ_bound_df_GSEA, "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/lowdose_PfSPZ_bound_df_GSEA_kendall.rds")
+```
+
+### Apply GSEA to mid-dose PfSPZ
+
+```{r apply fgsea mid-dose PfSPZ, warning=FALSE, message=FALSE}
+res_list <- list(NULL, NULL, NULL, NULL)
+names(res_list) <- c("CSP_IgG", "CSP_MBC", "Vd2", "TTE6")
+
+res_list$CSP_IgG <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "9.0 x 10^5 PfSPZ") %>%
+  dplyr::select(GeneSymbol, RankMetric_CSP_IgG) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_CSP_IgG = mean(RankMetric_CSP_IgG)) %>%
+  arrange(desc(RankMetric_CSP_IgG)) %>%
+  deframe()
+
+res_list$CSP_MBC <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "9.0 x 10^5 PfSPZ") %>%
+  dplyr::select(GeneSymbol, RankMetric_CSP_MBC) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_CSP_MBC = mean(RankMetric_CSP_MBC)) %>%
+  arrange(desc(RankMetric_CSP_MBC)) %>%
+  deframe()
+
+res_list$Vd2 <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "9.0 x 10^5 PfSPZ") %>%
+  dplyr::select(GeneSymbol, RankMetric_vd2) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_vd2 = mean(RankMetric_vd2)) %>%
+  arrange(desc(RankMetric_vd2)) %>%
+  deframe()
+
+res_list$TTE6 <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "9.0 x 10^5 PfSPZ") %>%
+  dplyr::select(GeneSymbol, RankMetric_TTE6) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_TTE6 = mean(RankMetric_TTE6)) %>%
+  arrange(desc(RankMetric_TTE6)) %>%
+  deframe()
+
+devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/NamedGeneRankList2GseaTable.R?raw=TRUE")
+middose_PfSPZ_bound_df_GSEA <- c()
+for(i in names(res_list)){
+  middose_PfSPZ_bound_df_GSEA[[i]] <- NamedGeneRankList2GseaTable(rankedgenes = res_list[[i]], geneset = "all", output_directory = tempdir(), filename_prefix =
+                                                 "GSEA_baseline_CSP_IgG_CSP_MBC_Vd2_TTE_mid_dose_PfSPZ", minSize = 20, fixed_seed = TRUE)
+  
+}
+closeAllConnections()
+```
+
+```{r save middose_PfSPZ_bound_df_GSEA, echo=FALSE, eval=FALSE, include=FALSE}
+saveRDS(middose_PfSPZ_bound_df_GSEA, "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/middose_PfSPZ_bound_df_GSEA_kendall.rds")
+```
+
+### Apply GSEA to high-dose PfSPZ
+
+```{r apply fgsea high-dose PfSPZ, warning=FALSE, message=FALSE}
+res_list <- list(NULL, NULL, NULL, NULL)
+names(res_list) <- c("CSP_IgG", "CSP_MBC", "Vd2", "TTE6")
+
+res_list$CSP_IgG <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "1.8 x 10^6 PfSPZ") %>%
+  dplyr::select(GeneSymbol, RankMetric_CSP_IgG) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_CSP_IgG = mean(RankMetric_CSP_IgG)) %>%
+  arrange(desc(RankMetric_CSP_IgG)) %>%
+  deframe()
+
+res_list$CSP_MBC <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "1.8 x 10^6 PfSPZ") %>%
+  dplyr::select(GeneSymbol, RankMetric_CSP_MBC) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_CSP_MBC = mean(RankMetric_CSP_MBC)) %>%
+  arrange(desc(RankMetric_CSP_MBC)) %>%
+  deframe()
+
+res_list$Vd2 <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "1.8 x 10^6 PfSPZ") %>%
+  dplyr::select(GeneSymbol, RankMetric_vd2) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_vd2 = mean(RankMetric_vd2)) %>%
+  arrange(desc(RankMetric_vd2)) %>%
+  deframe()
+
+res_list$TTE6 <- summarized_cpm_feature_dosegroup %>%
+  filter(Dosegroup == "1.8 x 10^6 PfSPZ") %>%
+  dplyr::select(GeneSymbol, RankMetric_TTE6) %>%
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>% 
+  summarize(RankMetric_TTE6 = mean(RankMetric_TTE6)) %>%
+  arrange(desc(RankMetric_TTE6)) %>%
+  deframe()
+
+devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/NamedGeneRankList2GseaTable.R?raw=TRUE")
+highdose_PfSPZ_bound_df_GSEA <- c()
+for(i in names(res_list)){
+  highdose_PfSPZ_bound_df_GSEA[[i]] <- NamedGeneRankList2GseaTable(rankedgenes = res_list[[i]], geneset = "all", output_directory = tempdir(), filename_prefix =
+                                                 "GSEA_baseline_CSP_IgG_CSP_MBC_Vd2_TTE_high_dose_PfSPZ", minSize = 20, fixed_seed = TRUE)
+  
+}
+closeAllConnections()
+```
+
+```{r save highdose_PfSPZ_bound_df_GSEA, echo=FALSE, eval=FALSE, include=FALSE}
+saveRDS(highdose_PfSPZ_bound_df_GSEA, "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/highdose_PfSPZ_bound_df_GSEA_kendall.rds")
+```
+
+Collapse all lists into dataframes and bind
+
+```{r collapse all lists into dataframes and bind}
+placebo_bound_df <- bind_rows(placebo_bound_df_GSEA, .id = "feature") %>%
+  mutate(dosegroup = "Placebo") %>%
+  dplyr::select(dosegroup, everything())
+
+lowdose_PfSPZ_bound_df <- bind_rows(lowdose_PfSPZ_bound_df_GSEA, .id = "feature") %>%
+  mutate(dosegroup = "4.5x10^5 PfSPZ") %>%
+  dplyr::select(dosegroup, everything())
+
+middose_PfSPZ_bound_df <- bind_rows(middose_PfSPZ_bound_df_GSEA, .id = "feature") %>%
+  mutate(dosegroup = "9.0x10^5 PfSPZ") %>%
+  dplyr::select(dosegroup, everything())
+
+highdose_PfSPZ_bound_df <- bind_rows(highdose_PfSPZ_bound_df_GSEA, .id = "feature") %>%
+  mutate(dosegroup = "1.8x10^6 PfSPZ") %>%
+  dplyr::select(dosegroup, everything())
+
+alldose_bound_df <- bind_rows(placebo_bound_df,
+                              lowdose_PfSPZ_bound_df,
+                              middose_PfSPZ_bound_df,
+                              highdose_PfSPZ_bound_df) %>%
+  mutate(dosegroup = factor(dosegroup, levels = c("Placebo", "4.5x10^5 PfSPZ", "9.0x10^5 PfSPZ", "1.8x10^6 PfSPZ")))
+```
+
+### Set options for GSEA plots
+
+- set FDR cutoff for visualization
+- set types of modules to display
+
+```{r set options for gsea plots}
+myfunction <- function(leadingEdge) {length(unlist(strsplit(leadingEdge, ", "))) } #function to split leading edges
+myFDRcutoff <- 0.05
+#myModules <- c("highBTMs", "MonacoModules", "BloodGen3Module", "MSigDB_Hallmark_v7.4")
+
+#limit to higher annotation modules for simplicity
+myModules <- c("highBTMs", "MonacoModules", "MSigDB_Hallmark_v7.4")
+#myModules <- c("highBTMs", "MonacoModules", "lowBTMs", "BloodGen3Module","MSigDB_Hallmark_v7.4")
+```
+
+### Plot TTE correlating GSEA results as bubble plot, all dose groups
+
+```{r arrange plot TTE GSEA all dose groups}
+basetextsize <- 8.5  
+myfont <- "Helvetica"
+bubble_max_size <- 8
+
+all_doses_plot_dat_TTE6 <- alldose_bound_df %>%
+  mutate(pathway = gsub("HALLMARK_", "", pathway)) %>%
+  mutate(pathway = gsub("_", " ", pathway)) %>%
+  filter(!grepl("TBD", pathway)) %>%
+  filter(module_type %in% myModules)  %>%
+  filter(feature == "TTE6") %>%
+  mutate(neglogpadj = -log10(padj)) %>%
+  filter(padj < myFDRcutoff) %>%
+  mutate(pathway = fct_reorder(pathway, NES, .desc = TRUE)) %>%
+  ungroup() 
+
+ all_dose_hiBTM_TTE6_plot <- all_doses_plot_dat_TTE6 %>%
+   filter(module_type == "highBTMs") %>%
+   ggplot(., aes(x = pathway, y = dosegroup)) +
+   geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+   scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+   scale_fill_gradient2(low = "blue",
+                        mid = "white",
+                        high = "red") +
+   hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+   theme(axis.title.x = element_blank(),
+         axis.title.y = element_blank(),
+         strip.background = element_blank(),
+         legend.position = "bottom",
+         legend.box = "vertical") +
+   theme(axis.text.x = element_blank()) +
+   coord_flip() 
+ 
+  all_dose_hallmark_TTE6_plot <- all_doses_plot_dat_TTE6 %>%
+   filter(module_type == "MSigDB_Hallmark_v7.4") %>%
+   ggplot(., aes(x = pathway, y = dosegroup)) +
+   geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+   scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+   scale_fill_gradient2(low = "blue",
+                        mid = "white",
+                        high = "red") +
+   hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+   theme(axis.title.x = element_blank(),
+         axis.title.y = element_blank(),
+         strip.background = element_blank(),
+         legend.position = "bottom",
+         legend.box = "vertical") +
+   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+   coord_flip() 
+```
+
+```{r plot TTE GSEA all dose groups, fig.align='center', fig.height=10, fig.width=4, echo=TRUE}
+ggarrange(all_dose_hiBTM_TTE6_plot, NULL ,all_dose_hallmark_TTE6_plot, ncol=1, common.legend = TRUE, align = "hv", legend = "bottom", heights = c(0.65, 0.001, 1))
+```
+
+```{r save plot TTE GSEA all dose groups, fig.align='center', fig.height=10, fig.width=4, echo=FALSE, eval=FALSE, include=FALSE}
+cairo_pdf(filename = paste0(figdir, "Figure 3C Revised Bubble Plots Baseline vs TTE GSEA.pdf"), height = 10, width=4)
+ggarrange(all_dose_hiBTM_TTE6_plot, NULL ,all_dose_hallmark_TTE6_plot, ncol=1, common.legend = TRUE, align = "hv", legend = "bottom", heights = c(0.65, 0.001, 1))
+dev.off()
+```
+
+### Plot CSP MBC correlating GSEA results as bubble plot, all dose groups
+
+```{r arrange plot CSP_MBC GSEA all dose groups}
+basetextsize <- 8.5  
+myfont <- "Helvetica"
+bubble_max_size <- 8
+
+all_doses_plot_dat_CSP_MBC <- alldose_bound_df %>%
+  mutate(pathway = gsub("HALLMARK_", "", pathway)) %>%
+  mutate(pathway = gsub("_", " ", pathway)) %>%
+  filter(!grepl("TBD", pathway)) %>%
+  filter(module_type %in% myModules)  %>%
+  filter(feature == "CSP_MBC") %>%
+  mutate(neglogpadj = -log10(padj)) %>%
+  filter(padj < myFDRcutoff) %>%
+  mutate(pathway = fct_reorder(pathway, NES, .desc = TRUE)) %>%
+  ungroup() 
+
+ all_dose_hiBTM_CSP_MBC_plot <- all_doses_plot_dat_CSP_MBC %>%
+   filter(module_type == "highBTMs") %>%
+   ggplot(., aes(x = pathway, y = dosegroup)) +
+   geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+   scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+   scale_fill_gradient2(low = "blue",
+                        mid = "white",
+                        high = "red") +
+   hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+   theme(axis.title.x = element_blank(),
+         axis.title.y = element_blank(),
+         strip.background = element_blank(),
+         legend.position = "bottom",
+         legend.box = "vertical") +
+   theme(axis.text.x = element_blank()) +
+   coord_flip()
+ 
+ all_dose_hallmark_CSP_MBC_plot <- all_doses_plot_dat_CSP_MBC %>%
+   filter(module_type == "MSigDB_Hallmark_v7.4") %>%
+   ggplot(., aes(x = pathway, y = dosegroup)) +
+   geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+   scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+   scale_fill_gradient2(low = "blue",
+                        mid = "white",
+                        high = "red") +
+   hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+   theme(axis.title.x = element_blank(),
+         axis.title.y = element_blank(),
+         strip.background = element_blank(),
+         legend.position = "bottom",
+         legend.box = "vertical") +
+   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+   coord_flip() 
+ 
+  all_dose_Monaco_CSP_MBC_plot <- all_doses_plot_dat_CSP_MBC %>%
+   filter(module_type == "MonacoModules") %>%
+   ggplot(., aes(x = pathway, y = dosegroup)) +
+   geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+   scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+   scale_fill_gradient2(low = "blue",
+                        mid = "white",
+                        high = "red") +
+   hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+   theme(axis.title.x = element_blank(),
+         axis.title.y = element_blank(),
+         strip.background = element_blank(),
+         legend.position = "bottom",
+         legend.box = "vertical") +
+   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+   coord_flip() 
+```
+
+```{r plot CSP_MBC GSEA all dose groups, fig.align='center', fig.height=9, fig.width=4, echo=FALSE}
+ggarrange(all_dose_hiBTM_CSP_MBC_plot, NULL ,all_dose_Monaco_CSP_MBC_plot, ncol=1, common.legend = TRUE, align = "hv", legend = "bottom", heights = c(1, 0.001, 1))
+```
+```{r save plot CSP_MBC GSEA all dose groups, fig.align='center', fig.height=10, fig.width=4, echo=FALSE, eval=FALSE, include=FALSE}
+cairo_pdf(filename = paste0(figdir, "Figure 3C Revised Bubble Plots Baseline vs CSP_MBC GSEA.pdf"), height = 9, width=4)
+ggarrange(all_dose_hiBTM_CSP_MBC_plot, NULL ,all_dose_Monaco_CSP_MBC_plot, ncol=1, common.legend = TRUE, align = "hv", legend = "bottom", heights = c(1, 0.001, 1))
+dev.off()
+```
+
+### Plot CSP IgG correlating GSEA results as bubble plot, all dose groups
+
+```{r arrange plot CSP_IgG GSEA all dose groups}
+basetextsize <- 7.5  
+myfont <- "Helvetica"
+bubble_max_size <- 6
+
+all_doses_plot_CSP_IgG <- alldose_bound_df %>%
+  filter(!grepl("TBD", pathway)) %>%
+  filter(module_type %in% myModules)  %>%
+  filter(feature == "CSP_IgG") %>%
+  mutate(neglogpadj = -log10(padj)) %>%
+  filter(padj < myFDRcutoff) %>%
+  mutate(pathway = fct_reorder(pathway, NES, .desc = TRUE)) %>%
+  ungroup() %>%
+  mutate(dosegroup = fct_rev(dosegroup)) %>%
+  ggplot(., aes(x = pathway, y = dosegroup)) +
+  geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+  scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+      scale_fill_gradient2(low = "blue",
+                           mid = "white",
+                           high = "red") +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.background = element_blank(),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+facet_wrap(~module_type, scales = "free_x", nrow= 5)
+```
+
+```{r plot CSP_IgG GSEA all dose groups, fig.align='center', fig.height=16, fig.width=12, echo=FALSE}
+all_doses_plot_CSP_IgG
+```
+
+### Plot Vd2 gd T correlating GSEA results as bubble plot, all dose groups
+
+```{r arrange plot Vd2 GSEA all dose groups}
+basetextsize <- 7.5  
+myfont <- "Helvetica"
+bubble_max_size <- 6
+
+all_doses_plot_Vd2 <- alldose_bound_df %>%
+  filter(!grepl("TBD", pathway)) %>%
+  filter(module_type %in% myModules)  %>%
+  filter(feature == "Vd2") %>%
+  mutate(neglogpadj = -log10(padj)) %>%
+  filter(padj < myFDRcutoff) %>%
+  mutate(pathway = fct_reorder(pathway, NES, .desc = TRUE)) %>%
+  ungroup() %>%
+  mutate(dosegroup = fct_rev(dosegroup)) %>%
+  ggplot(., aes(x = pathway, y = dosegroup)) +
+  geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+  scale_size_area(name = expression(-log[10]~adjp), max_size = bubble_max_size) +
+      scale_fill_gradient2(low = "blue",
+                           mid = "white",
+                           high = "red") +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        strip.background = element_blank(),
+        legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+facet_wrap(~module_type, scales = "free_x", nrow= 5)
+```
+
+```{r plot Vd2 GSEA all dose groups, fig.align='center', fig.height=16, fig.width=12, echo=FALSE}
+all_doses_plot_Vd2
+```
+
+### Plot GSEA results as bar plot, Placebo
+
+Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and CSP-specific IgG at 2-weeks post-vaccination; % CSP-specific of memory B cells at 2-weeks post-vaccination; Vd2 gdT cells at baseline; and time to first parasitemia. This exploratory analysis is not included in manuscript.
+
+```{r arrange data for plots Placebo, echo = FALSE}
+my_placebo_GSEA_PlotDat <- alldose_bound_df %>%
+  filter(dosegroup == "Placebo") %>%
+  filter(padj < myFDRcutoff) %>%
+  filter(module_type %in% myModules) %>%
+  dplyr::mutate(edges = purrr::pmap_dbl(list(leadingEdge), myfunction)) %>%
+  dplyr::mutate(bubblelabel = paste(edges,size, sep = "/")) %>%
+  group_by(module_type) %>%
+  arrange(module_type, desc(NES), padj) %>%
+  dplyr::select(feature, module_type, pathway, edges, size, bubblelabel, NES, padj) %>%
+  ungroup() %>%
+  filter(!grepl("TBA", pathway)) %>%
+  mutate(pathway = gsub("gd", "γδ", pathway)) %>%
+  mutate(pathway = gsub("Vd2", "Vδ2", pathway)) %>%
+  mutate(pathway = gsub("Vg", "Vγ", pathway)) %>%
+  mutate(pathway = gsub("HALLMARK_", "", pathway)) %>%
+  mutate(pathway = gsub("_", " ", pathway)) %>%
+  mutate(neglogpadj = -log10(padj)) %>%
+  arrange(neglogpadj) %>%
+  mutate(pathway = fct_reorder(pathway, NES, .desc=TRUE)) %>%
+  mutate(pathway = fct_reorder(pathway, neglogpadj)) %>%
+  mutate(TextLabelColor = ifelse(module_type == "MonacoModules", scales::muted("red"),
+                                 ifelse(module_type == "highBTMs", scales::muted("blue"),
+                                        ifelse(module_type == "MSigDB_Hallmark_v7.4", "black","orange")))) %>%
+  arrange(desc(neglogpadj))
+
+myColors <- rev(my_placebo_GSEA_PlotDat$TextLabelColor)
+my_placebo_GSEA_Plot  <- my_placebo_GSEA_PlotDat  %>%
+  ggplot(., aes(x = NES, y = pathway, fill = neglogpadj)) +
+  geom_bar(stat = 'identity') +
+  viridis::scale_fill_viridis(option= "A", begin = 0.25, end = 0.75, alpha = 0.8, direction = -1, name = "neglogpadj") +
+  theme_classic(base_family = "sans", base_size = 14) +
+  theme(legend.position = "bottom") +
+  facet_wrap(~feature)
+```
+
+```{r print GSEA plot Placebo, fig.align='center', fig.height=16, fig.width=12, echo=FALSE}
+my_placebo_GSEA_Plot
+```
+
+### Plot GSEA results as bar plot, low-dose PfSPZ
+
+Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and CSP-specific IgG at 2-weeks post-vaccination; % CSP-specific of memory B cells at 2-weeks post-vaccination; Vd2 gdT cells at baseline; and time to first parasitemia.
+
+```{r arrange data for plots low-dose PfSPZ, echo = FALSE}
+my_lowdose_GSEA_PlotDat <- my_lowdose_GSEA_Plot <- c()
+for(i in names(lowdose_PfSPZ_bound_df_GSEA)){
+  my_lowdose_GSEA_PlotDat[[i]] <- lowdose_PfSPZ_bound_df_GSEA[[i]] %>%
+    filter(padj < myFDRcutoff) %>%
+    filter(module_type %in% myModules) %>%
+    dplyr::mutate(edges = purrr::pmap_dbl(list(leadingEdge), myfunction)) %>%
+    dplyr::mutate(bubblelabel = paste(edges,size, sep = "/")) %>%
+    group_by(module_type) %>%
+    arrange(module_type, desc(NES), padj) %>%
+    dplyr::select(module_type, pathway, edges, size, bubblelabel, NES, padj) %>%
+    ungroup() %>%
+    filter(!grepl("TBA", pathway)) %>%
+    mutate(pathway = gsub("gd", "γδ", pathway)) %>%
+    mutate(pathway = gsub("Vd2", "Vδ2", pathway)) %>%
+    mutate(pathway = gsub("Vg", "Vγ", pathway)) %>%
+    mutate(pathway = gsub("HALLMARK_", "", pathway)) %>%
+    mutate(pathway = gsub("_", " ", pathway)) %>%
+    mutate(neglogpadj = -log10(padj)) %>%
+    arrange(neglogpadj) %>%
+    mutate(pathway = fct_reorder(pathway, NES, .desc=TRUE)) %>%
+    mutate(pathway = fct_reorder(pathway, neglogpadj)) %>%
+    mutate(TextLabelColor = ifelse(module_type == "MonacoModules", scales::muted("red"),
+                                   ifelse(module_type == "highBTMs", scales::muted("blue"),
+                                          ifelse(module_type == "MSigDB_Hallmark_v7.4", "black","orange")))) %>%
+    arrange(desc(neglogpadj))
+  myColors <- rev(my_lowdose_GSEA_PlotDat$TextLabelColor)
+  my_lowdose_GSEA_Plot[[i]]  <- my_lowdose_GSEA_PlotDat[[i]]  %>%
+    ggplot(., aes(x = NES, y = pathway, fill = neglogpadj)) +
+    geom_bar(stat = 'identity') +
+    viridis::scale_fill_viridis(option= "A", begin = 0.25, end = 0.75, alpha = 0.8, direction = -1, name = "neglogpadj") +
+    theme_classic(base_family = "sans", base_size = 14) +
+    theme(legend.position = "bottom", axis.text.y = element_text(colour = myColors))
+}
+```
+
+```{r print GSEA plot low-dose PfSPZ, fig.align='center', fig.height=12, fig.width=12, echo=FALSE}
+low_dose_plot <- ggarrange(plotlist = my_lowdose_GSEA_Plot, labels = names(my_lowdose_GSEA_Plot),common.legend = TRUE, heights = c(1,2), align = "hv")
+low_dose_plot
+```
+
+### Plot GSEA results as bar plot, mid-dose PfSPZ
+
+Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and CSP-specific IgG at 2-weeks post-vaccination; % CSP-specific of memory B cells at 2-weeks post-vaccination; Vd2 gdT cells at baseline; and time to first parasitemia.
+
+```{r arrange data for plots mid-dose PfSPZ, echo = FALSE}
+my_middose_GSEA_PlotDat <- my_middose_GSEA_Plot <- c()
+for(i in names(middose_PfSPZ_bound_df_GSEA)){
+  my_middose_GSEA_PlotDat[[i]] <- middose_PfSPZ_bound_df_GSEA[[i]] %>%
+    filter(padj < myFDRcutoff) %>%
+    filter(module_type %in% myModules) %>%
+    dplyr::mutate(edges = purrr::pmap_dbl(list(leadingEdge), myfunction)) %>%
+    dplyr::mutate(bubblelabel = paste(edges,size, sep = "/")) %>%
+    group_by(module_type) %>%
+    arrange(module_type, desc(NES), padj) %>%
+    dplyr::select(module_type, pathway, edges, size, bubblelabel, NES, padj) %>%
+    ungroup() %>%
+    filter(!grepl("TBA", pathway)) %>%
+    mutate(pathway = gsub("gd", "γδ", pathway)) %>%
+    mutate(pathway = gsub("Vd2", "Vδ2", pathway)) %>%
+    mutate(pathway = gsub("Vg", "Vγ", pathway)) %>%
+    mutate(pathway = gsub("HALLMARK_", "", pathway)) %>%
+    mutate(pathway = gsub("_", " ", pathway)) %>%
+    mutate(neglogpadj = -log10(padj)) %>%
+    arrange(neglogpadj) %>%
+    mutate(pathway = fct_reorder(pathway, NES, .desc=TRUE)) %>%
+    mutate(pathway = fct_reorder(pathway, neglogpadj)) %>%
+    mutate(TextLabelColor = ifelse(module_type == "MonacoModules", scales::muted("red"),
+                                   ifelse(module_type == "highBTMs", scales::muted("blue"),
+                                          ifelse(module_type == "MSigDB_Hallmark_v7.4", "black","orange")))) %>%
+    arrange(desc(neglogpadj))
+  myColors <- rev(my_middose_GSEA_PlotDat$TextLabelColor)
+  my_middose_GSEA_Plot[[i]]  <- my_middose_GSEA_PlotDat[[i]]  %>%
+    ggplot(., aes(x = NES, y = pathway, fill = neglogpadj)) +
+    geom_bar(stat = 'identity') +
+    viridis::scale_fill_viridis(option= "A", begin = 0.25, end = 0.75, alpha = 0.8, direction = -1, name = "neglogpadj") +
+    theme_classic(base_family = "sans", base_size = 14) +
+    theme(legend.position = "bottom", axis.text.y = element_text(colour = myColors))
+  }
+```
+
+```{r print GSEA plot mid-dose PfSPZ, fig.align='center', fig.height=12, fig.width=12, echo=FALSE}
+mid_dose_plot <- ggarrange(plotlist = my_middose_GSEA_Plot, labels = names(my_middose_GSEA_Plot),common.legend = TRUE, heights = c(1,2), align = "hv")
+mid_dose_plot
+```
+
+### Plot GSEA results as bar plot, high-dose PfSPZ
+
+Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and CSP-specific IgG at 2-weeks post-vaccination; % CSP-specific of memory B cells at 2-weeks post-vaccination; Vd2 gdT cells at baseline; and time to first parasitemia.
+
+```{r arrange data for plots high-dose PfSPZ, echo = FALSE}
+my_highdose_GSEA_PlotDat <- my_highdose_GSEA_Plot <- c()
+for(i in names(highdose_PfSPZ_bound_df_GSEA)){
+  my_highdose_GSEA_PlotDat[[i]] <- highdose_PfSPZ_bound_df_GSEA[[i]] %>%
+    filter(padj < myFDRcutoff) %>%
+    filter(module_type %in% myModules) %>%
+    dplyr::mutate(edges = purrr::pmap_dbl(list(leadingEdge), myfunction)) %>%
+    dplyr::mutate(bubblelabel = paste(edges,size, sep = "/")) %>%
+    group_by(module_type) %>%
+    arrange(module_type, desc(NES), padj) %>%
+    dplyr::select(module_type, pathway, edges, size, bubblelabel, NES, padj) %>%
+    ungroup() %>%
+    filter(!grepl("TBA", pathway)) %>%
+    mutate(pathway = gsub("gd", "γδ", pathway)) %>%
+    mutate(pathway = gsub("Vd2", "Vδ2", pathway)) %>%
+    mutate(pathway = gsub("Vg", "Vγ", pathway)) %>%
+    mutate(pathway = gsub("HALLMARK_", "", pathway)) %>%
+    mutate(pathway = gsub("_", " ", pathway)) %>%
+    mutate(neglogpadj = -log10(padj)) %>%
+    arrange(neglogpadj) %>%
+    mutate(pathway = fct_reorder(pathway, NES, .desc=TRUE)) %>%
+    mutate(pathway = fct_reorder(pathway, neglogpadj)) %>%
+    mutate(TextLabelColor = ifelse(module_type == "MonacoModules", scales::muted("red"),
+                                   ifelse(module_type == "highBTMs", scales::muted("blue"),
+                                          ifelse(module_type == "MSigDB_Hallmark_v7.4", "black","orange")))) %>%
+    arrange(desc(neglogpadj))
+  myColors <- rev(my_highdose_GSEA_PlotDat$TextLabelColor)
+  my_highdose_GSEA_Plot[[i]]  <- my_highdose_GSEA_PlotDat[[i]]  %>%
+    ggplot(., aes(x = NES, y = pathway, fill = neglogpadj)) +
+    geom_bar(stat = 'identity') +
+    viridis::scale_fill_viridis(option= "A", begin = 0.25, end = 0.75, alpha = 0.8, direction = -1, name = "neglogpadj") +
+    theme_classic(base_family = "sans", base_size = 14) +
+    theme(legend.position = "bottom", axis.text.y = element_text(colour = myColors))
+  }
+```
+
+```{r print GSEA plot high-dose PfSPZ, fig.align='center', fig.height=8, fig.width=10, echo=FALSE}
+high_dose_plot <- ggarrange(plotlist = my_highdose_GSEA_Plot, labels = names(my_highdose_GSEA_Plot),common.legend = TRUE, heights = c(1,1), align = "hv")
+high_dose_plot
+```
+
+```{r print GSEA TTE all doses, fig.align='center', fig.height=9, fig.width=12, echo=FALSE}
+alldose_GSEA_TTE_plot <- ggarrange(my_placebo_GSEA_Plot$TTE6, my_middose_GSEA_Plot$TTE6, my_lowdose_GSEA_Plot$TTE6, my_highdose_GSEA_Plot$TTE6,
+                                   labels = c("Placebo","9.0x10^5 PfSPZ", "4.5x10^5 PfSPZ", "1.8x10^6 PfSPZ"),
+                                   common.legend = TRUE, ncol = 2, nrow= 2, align = "hv", heights = c(1.5,1))
+alldose_GSEA_TTE_plot
+```

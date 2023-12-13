@@ -1,0 +1,643 @@
+---
+title: "KSPZV1 Baseline Innate CD8 Postvax Revision"
+author: "Tuan M. Tran"
+date: "2023-11-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(googledrive)
+library(ggpubr)
+
+addSmallLegend <- function(myPlot, pointSize = 6, textSize = 6, spaceLegend = 1) {
+    myPlot +
+        guides(shape = guide_legend(override.aes = list(size = pointSize)),
+               color = guide_legend(override.aes = list(size = pointSize))) +
+        theme(legend.title = element_text(size = textSize), 
+              legend.text  = element_text(size = textSize),
+              legend.key.size = unit(spaceLegend, "lines"))
+}
+```
+
+## Objective
+
+Addresses review 2 question to more directly show that innate activation limits CD8+ T cell responses in humans.
+
+Main approach is to perform edgeR DGE followed by GSEA using baseline transcriptomes and the following comparison:
+PfSPZ-specific CD8 T cell detectable vs non-detectable at 2 weeks post-vax.
+
+Alternative approach is similar to what as done for CSP-specific antibody response.
+Correlate every baseline gene with PfSPZ-specific CD8+ and then perform GSEA.
+
+
+## Method 1: Differential Gene Expression Analysis
+
+```{r load SeqExpressionSet 2, message=FALSE, warning=FALSE}
+#from google drive
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1Q4VXYxdl9CqtzhcvHA9pn8q06_YOZgi8"), path = temp, overwrite = TRUE)
+x_counts <- readRDS(file = dl$local_path)
+x_counts$treat <- factor(x_counts$treat, levels = c("Placebo", "4.5 x 10^5 PfSPZ", "9.0 x 10^5 PfSPZ", "1.8 x 10^6 PfSPZ"))
+```
+
+```{r read in FACS and assess CD8s, fig.align='center', fig.height=10, fig.width=8}
+alldat <- readRDS(file = "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/PfSPZ_FACS_PlasmaCytokine_MonocyteActivation_03312021.Rds") %>%
+  column_to_rownames(var = "PATID.OG") %>%
+  mutate_if(is.character,as.numeric) %>%
+  rownames_to_column(var = "PATID") %>%
+  mutate(PATID = gsub("_.*", "", PATID)) %>%
+  pivot_longer(cols = 3:102, names_to = "feature", values_to = "value") %>%
+  filter(grepl("CD8", feature)) %>%
+  filter(grepl("FACS", feature)) %>%
+  filter(grepl("PfSPZ", feature)) %>%
+  filter(grepl("lymphocytes", feature))
+
+pfspz_cd8 <- alldat %>%
+  pivot_wider(names_from = Timepoint, names_prefix = "PfSPZ_CD8_", values_from = value) %>%
+  mutate(PfSPZ_CD8_log2FC = log2((PfSPZ_CD8_25+0.0001)/(PfSPZ_CD8_0+0.0001))) %>%
+  dplyr::select(PATID, feature, PfSPZ_CD8_0, PfSPZ_CD8_25, PfSPZ_CD8_log2FC) %>%
+  filter(PATID %in% x_counts$PATID) %>%
+  left_join(., pData(x_counts) %>%
+              filter(Timepoint == 0) %>%
+              dplyr::select(PATID, Timepoint, treat, mal.atp.3, mal.atp.6) %>%
+              mutate(Outcome = factor(ifelse(mal.atp.3 == 0, "P", "NP"))) %>%
+              rename(treat = "dose_group") %>%
+              dplyr::select(-c(mal.atp.3, mal.atp.6, Timepoint)),
+            by = "PATID") %>%
+  drop_na(c(PfSPZ_CD8_0, PfSPZ_CD8_25))
+
+
+pfspz_cd8_long <- pfspz_cd8 %>%
+  pivot_longer(cols = contains("PfSPZ_CD8"), names_to = "variable", values_to = "pct_of_live_lymphs")
+
+#plot
+library(ggbeeswarm)
+myplot <- pfspz_cd8_long %>%
+  #mutate(dose_group2 = factor(ifelse(dose_group=="Placebo", "Placebo", "PfSPZ Vaccine (any dose)"), levels = c("Placebo", "PfSPZ Vaccine (any dose)"))) %>%
+  filter(dose_group %in% c("Placebo", "1.8 x 10^6 PfSPZ")) %>%
+  #filter(variable != "PfSPZ_CD8_log2FC") %>%
+  filter(variable == "PfSPZ_CD8_25") %>%
+  ggplot(., aes(x = dose_group, y = pct_of_live_lymphs, color = dose_group)) +
+  geom_boxplot() +
+  geom_quasirandom() +
+  ylab("percent of live lymphocytes") +
+  scale_color_manual(values = c("#808080", "#d7301f")) +
+  #stat_compare_means(method = "wilcox.test") + 
+  theme_bw() +
+  theme(axis.title.x = element_blank(),
+        legend.position = "none")
+
+pfspz_cd8 <- pfspz_cd8 %>%
+  mutate(cd8_25_greater_0 = factor(ifelse(PfSPZ_CD8_25>0, "detected", "not detected"))) %>%
+  mutate(cd8_LFC_cat = factor(ifelse(PfSPZ_CD8_log2FC > 0, "increased", "not increased")))
+summary(pfspz_cd8$cd8_LFC_cat)
+table(pfspz_cd8$cd8_LFC_cat, pfspz_cd8$dose_group)
+pfspz_cd8_vax_only <- pfspz_cd8 %>%
+  filter(dose_group != "Placebo") %>%
+  droplevels()
+table(pfspz_cd8_vax_only$cd8_25_greater_0, pfspz_cd8_vax_only$Outcome)
+```
+
+```{r save plot}
+# ggsave("/Volumes/GoogleDrive/My Drive/Manuscripts/KSPZV1 Manuscript/Med Revised Submission 2022/Figures/Revised Figure Panels/Figure 7A beeswarms.pdf", myplot, device = "pdf", height = 2.75, width = 3)
+```
+
+Add FACS data to pData
+
+```{r deg}
+pData(x_counts) <- pData(x_counts) %>%
+  rownames_to_column(var = "rowname") %>%
+  left_join(.,  pfspz_cd8 %>%
+              dplyr::select(PATID, cd8_25_greater_0),
+            by = "PATID") %>%
+  column_to_rownames(var = "rowname") 
+x2 <- x_counts[,which(!is.na(x_counts$cd8_25_greater_0))]
+```
+
+Reduce samples
+```{r set options, message=FALSE, warning=FALSE}
+myTimepoint <- 0
+```
+
+### Reduce samples
+
+```{r reduced data, message=FALSE, warning=FALSE}
+xgroup <- setNames(as.list(c(1:2)), c("Placebo", "1.8 x 10^6 PfSPZ"))
+for(i in names(xgroup)){
+  xgroup[[i]] <- x2[, which(x2$treat == i)]
+  xgroup[[i]] <- xgroup[[i]][,xgroup[[i]]$Timepoint == myTimepoint]
+  xgroup[[i]]$treat <- droplevels(xgroup[[i]]$treat)
+  #impute only missing CSP Ab value as median CSP A of all baseline samples (only affects one subject in 9.0x10^6 PfSPZ dose group)
+  xgroup[[i]]$CSPAb <- ifelse(is.na(xgroup[[i]]$CSPAb), median(xgroup[[i]]$CSPAb, na.rm = TRUE), xgroup[[i]]$CSPAb)
+  print(i)
+  print(table(cd8_25_greater_0 = xgroup[[i]]$cd8_25_greater_0, Timepoint = xgroup[[i]]$Timepoint))
+  print(table(cd8_25_greater_0 = xgroup[[i]]$cd8_25_greater_0, Dosegroup = xgroup[[i]]$treat))
+  print(dim(xgroup[[i]]))
+}
+```
+
+Build DGEList Object
+
+```{r make DGEList object, message=FALSE, warning=FALSE}
+library(edgeR)
+
+#Define group by dose, timepoint and outcome
+ygroup <- setNames(as.list(c(1:2)), c("Placebo", "1.8 x 10^6 PfSPZ"))
+for(i in names(ygroup)){
+  ygroup[[i]]  <- DGEList(counts=counts(xgroup[[i]]), genes=fData(xgroup[[i]]), group= factor(paste(xgroup[[i]]$treat, xgroup[[i]]$Timepoint, xgroup[[i]]$cd8_25_greater_0, sep = "_")), remove.zeros=T)
+  ygroup[[i]]$samples$PATID <- gsub("_.*", "", rownames(ygroup[[i]]$samples))
+}
+```
+
+### Filter out low expression features
+
+```{r low expression filters, message=FALSE, warning=FALSE}
+for(i in names(ygroup)){
+  keep <- filterByExpr(ygroup[[i]])
+  ygroup[[i]] <- ygroup[[i]][keep, , keep.lib.sizes=FALSE]
+  ygroup[[i]]$samples$lib.size <- colSums(ygroup[[i]]$counts)
+  ygroup[[i]] <- calcNormFactors(ygroup[[i]])	#Normalization
+}
+```
+
+### Analysis between Not Protected and Protected within a Dose Group
+
+
+```{r, build design matrix protected vs not protected by group, message=FALSE, warning=FALSE}
+degtab <- setNames(as.list(c(1:2)), c("Placebo", "1.8 x 10^6 PfSPZ"))
+for(i in names(ygroup)){
+  Subject <- factor(xgroup[[i]]$PATID)
+  Outcome <- factor(xgroup[[i]]$cd8_25_greater_0, levels =  c("not detected","detected"))
+  Timepoint <- factor(xgroup[[i]]$Timepoint, levels = c(0,25), labels = c("baseline","postvax"))
+  Sex <- factor(xgroup[[i]]$SEX)
+  Batch <- factor(xgroup[[i]]$SEQBATCH, levels = c("Aug2019","Nov2019"))
+  Site <- as.factor(xgroup[[i]]$site)
+  CSPAb <- as.integer(xgroup[[i]]$CSPAb)
+  CSPAb <- log10(CSPAb+1) #log transform CSP Ab data to make linear
+  Pf_VAX1 <- as.factor(xgroup[[i]]$mal.vax.1)
+  #This is the revised Timepoint 0 analysis.
+  design <- model.matrix(~Batch + Sex + Site + CSPAb + Pf_VAX1 + Outcome)
+  print(i)
+  print(colnames(design))
+  rownames(design) <- ygroup[[i]]$samples$PATID
+  ygroup[[i]]     <- estimateDisp(ygroup[[i]],design, robust = TRUE)
+  fit   <- glmQLFit(ygroup[[i]], design, robust = TRUE)
+  qlf <- glmQLFTest(fit, contrast = c(rep(0, ncol(design)-1),1))
+  degtab[[i]] <- topTags(qlf, n = nrow(ygroup[[i]]))$table
+}
+```
+
+### Apply GSEA of Detected vs Not Detected
+
+Rank genes by -log10(PValue)*sign(logFC). Run fgsea from fgsea package using NamedGeneRankList2GseaTable helper function.
+
+```{r apply fgsea, warning=FALSE, message=FALSE}
+ranks <- degtab
+for(i in names(degtab)){
+  ranks[[i]] <- degtab[[i]] %>% 
+  mutate(rankmetric = -log10(.$PValue)*sign(.$logFC)) %>%
+  dplyr::select(GeneSymbol,rankmetric) %>% 
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(GeneSymbol) %>%  
+  summarize(rankmetric = mean(rankmetric)) %>%
+  arrange(desc(rankmetric)) %>%
+  deframe()
+}
+#Run fgsea from fgsea package using NamedGeneRankList2GseaTable helper function
+devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/NamedGeneRankList2GseaTable.R?raw=TRUE")
+GSEAtab <- ranks
+for(i in names(ranks)){
+  GSEAtab[[i]] <- NamedGeneRankList2GseaTable(rankedgenes = ranks[[i]],
+                                         geneset = "all",
+                                         output_directory = tempdir(),
+                                         filename_prefix = "GSEA",
+                                         sampleSize = 101,
+                                         minSize = 20,
+                                         maxSize = Inf,
+                                         scoreType = "std") %>%
+    as_tibble() %>%
+    arrange(desc(NES)) %>% 
+    dplyr::select(module_type, pathway, ES, NES, size, leadingEdge, pval, padj) %>% 
+    mutate(leadingEdge = gsub("^c\\(|\\)$", "", leadingEdge)) %>%
+    mutate(leadingEdge = gsub('"', "", leadingEdge)) %>%
+    arrange(padj)
+}
+# These are the genes with duplicated rankmetrics...can ignore warning about ties b/c it's trivial (only involves two genes)
+# 1 RP11-521C22.3    -0.0303
+# 2 AC069547.1       -0.0303
+```
+
+
+```{r arrange data for GSEA detected vs not detected plots, echo = FALSE}
+myfunction <- function(leadingEdge) { length(unlist(strsplit(leadingEdge, ", "))) }
+myFDRcutoff <- 0.05
+
+myModules <- c("lowBTMs", "highBTMs")
+myModules <- c("highBTMs")
+myGSEAClusterPlotDat <- GSEAtab %>%
+  bind_rows(., .id = "dosegroup") %>%
+  mutate(dosegroup = factor(dosegroup, levels = c("1.8 x 10^6 PfSPZ", "Placebo"), labels = c("1.8x106 PfSPZ", "Placebo"))) %>%
+  filter(padj < myFDRcutoff) %>%
+  filter(module_type %in% myModules) %>%
+  dplyr::mutate(edges = purrr::pmap_dbl(list(leadingEdge), myfunction)) %>%
+  dplyr::mutate(bubblelabel = paste(edges,size, sep = "/")) %>%
+  group_by(module_type) %>%
+    arrange(module_type, desc(NES), padj) %>%
+    dplyr::select(module_type, pathway, edges, size, bubblelabel, NES, padj, dosegroup) %>%
+  ungroup() %>%
+  filter(!grepl("TBA", pathway)) %>%
+  mutate(pathway = gsub("gd", "γδ", pathway)) %>%
+  mutate(pathway = gsub("Vd2", "Vδ2", pathway)) %>%
+  mutate(pathway = gsub("Vg", "Vγ", pathway)) %>%
+  mutate(pathway = gsub("HALLMARK_", "", pathway)) %>%
+  mutate(pathway = gsub("_", " ", pathway)) %>%
+  mutate(neglogpadj = -log10(padj)) %>%
+  arrange(neglogpadj) %>%
+  mutate(pathway = fct_reorder(pathway, NES, .desc=TRUE)) %>%
+  mutate(pathway = fct_reorder(pathway, neglogpadj)) %>%
+  mutate(TextLabelColor = ifelse(module_type == "lowBTMs", scales::muted("red"),
+                                 ifelse(module_type == "highBTMs", scales::muted("blue"),
+                                        ifelse(module_type == "MonacoModules", "black","orange")))) %>%
+  arrange(desc(neglogpadj)) %>% 
+  droplevels()
+```
+
+```{r print GSEA detected vs not detected bubble plot, fig.align='center', fig.height=7, fig.width=9, fig.align='center', echo=FALSE}
+#plotting options
+basetextsize <- 8  
+myfont <- "Helvetica"
+bubble_max_size <- 8
+
+myGSEA_bubble_plot <- myGSEAClusterPlotDat %>%
+  ggplot(., aes(x = dosegroup, y = factor(pathway, 
+       levels = rev(levels(factor(pathway)))))) +
+  geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
+  scale_size_area(name = expression(-log[10]~adj.~p~value), max_size = bubble_max_size, breaks = c(1.3, 5, 10, 20, 40, 60), limits = c(1,90)) +
+      scale_fill_gradient2(low = "blue",
+                           mid = "white",
+                           high = "red") +
+  hrbrthemes::theme_ipsum_es(base_family = myfont, base_size = basetextsize) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        #axis.text.x.bottom = element_blank(),
+        strip.background = element_blank(),
+        legend.position = "left",
+        legend.direction = "vertical",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust=1, colour = "black"),
+        axis.text.y = element_text(color = "black")) +
+facet_wrap(~module_type, scales = "free_y", nrow = 2, strip.position = "right")
+
+cairo_pdf(filename = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Figure Panels/Fig 7X Detected vs not detected GSEA PfSPZ CD8 edgeR placebo highdose PfSPZ hiBTMs bbubbleplot.pdf", width = 4.5, height = 3)
+addSmallLegend(myGSEA_bubble_plot)
+dev.off
+```
+
+```{r print GSEA detected vs not detected bar plot, fig.align='center', fig.height=7, fig.width=9, fig.align='center', echo=FALSE}
+
+myGSEAClusterPlot <- myGSEAClusterPlotDat %>%
+  ggplot(., aes(x = NES, y = pathway, fill = neglogpadj)) +
+  geom_bar(stat = 'identity') + 
+  viridis::scale_fill_viridis(option= "A", begin = 0.25, end = 0.75, alpha = 0.8, direction = -1, name = "neglogpadj") +
+  theme_bw(base_family = "Arial", base_size = 14) +
+  theme(legend.position = "bottom",
+        strip.background = element_blank()) +
+  geom_vline(xintercept = 0, color = "red", lty = "dashed", alpha = 0.3) +
+  facet_wrap(~dosegroup, ncol= 2)
+
+pdf(file = "/Volumes/GoogleDrive/My Drive/Manuscripts/KSPZV1 Manuscript/Med Revised Submission 2022/Figures/Revised Figure Panels/Fig 7X Detected vs not detected GSEA PfSPZ CD8 edgeR placebo highdose PfSPZ hiBTMs barplot.pdf", width = 5.5, height = 3.5)
+print(addSmallLegend(myGSEAClusterPlot))
+dev.off
+```
+
+## Method #2: Correlate baseline gene expression to PfSPZ CD8 T cells at 2 weeks then apply GSEAS
+
+## Load ExpressionSet
+
+```{r load cpm eset, message=FALSE, warning=FALSE}
+#local
+#x	<-	readRDS("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 logCPM expression sets for visualization/PfSPZ_cpm_ExpressionSet_244x21815_AllGroups_bothBatches_0_rmBatchFX_06082021_TMT_logTRUE.rds")
+#from google drive
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1togaBlNIxiDj16FyXTC-r7Qw0A9cG2az"), path = temp, overwrite = TRUE)
+x <- readRDS(file = dl$local_path)
+x$treat <- factor(x$treat, levels = c("Placebo", "4.5 x 10^5 PfSPZ", "9.0 x 10^5 PfSPZ", "1.8 x 10^6 PfSPZ"))
+#x <- x[,x$treat != "Placebo"]
+#x <- x[,x$treat %in% c("Placebo","1.8 x 10^6 PfSPZ")]
+pData(x) <- droplevels(pData(x))
+```
+
+```{r read in FACS and assess CD8s, fig.align='center', fig.height=10, fig.width=8}
+alldat <- readRDS(file = "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/PfSPZ_FACS_PlasmaCytokine_MonocyteActivation_03312021.Rds") %>%
+  column_to_rownames(var = "PATID.OG") %>%
+  mutate_if(is.character,as.numeric) %>%
+  rownames_to_column(var = "PATID") %>%
+  mutate(PATID = gsub("_.*", "", PATID)) %>%
+  pivot_longer(cols = 3:102, names_to = "feature", values_to = "value") %>%
+  filter(grepl("CD8", feature)) %>%
+  filter(grepl("FACS", feature)) %>%
+  filter(grepl("PfSPZ", feature)) %>%
+  filter(grepl("lymphocytes", feature))
+
+pfspz_cd8 <- alldat %>%
+  pivot_wider(names_from = Timepoint, names_prefix = "PfSPZ_CD8_", values_from = value) %>%
+  mutate(PfSPZ_CD8_log2FC = log2((PfSPZ_CD8_25+0.0001)/(PfSPZ_CD8_0+0.0001))) %>%
+  dplyr::select(PATID, feature, PfSPZ_CD8_0, PfSPZ_CD8_25, PfSPZ_CD8_log2FC) %>%
+  filter(PATID %in% x$PATID) %>%
+  left_join(., pData(x) %>%
+              filter(Timepoint == 0) %>%
+              dplyr::select(PATID, Timepoint, treat, mal.atp.3, mal.atp.6) %>%
+              mutate(Outcome = factor(ifelse(mal.atp.3 == 0, "P", "NP"))) %>%
+              rename(treat = "dose_group") %>%
+              dplyr::select(-c(mal.atp.3, mal.atp.6, Timepoint)),
+            by = "PATID") %>%
+  drop_na(c(PfSPZ_CD8_0, PfSPZ_CD8_25))
+
+
+pfspz_cd8_long <- pfspz_cd8 %>%
+  pivot_longer(cols = contains("PfSPZ_CD8"), names_to = "variable", values_to = "pct_of_live_lymphs")
+
+#plot
+library(ggbeeswarm)
+pfspz_cd8_long %>%
+  mutate(dose_group2 = factor(ifelse(dose_group=="Placebo", "Placebo", "PfSPZ Vaccine (any dose)"), levels = c("Placebo", "PfSPZ Vaccine (any dose)"))) %>%
+  #filter(dose_group == "1.8 x 10^6 PfSPZ") %>%
+  #filter(variable != "PfSPZ_CD8_log2FC") %>%
+  filter(variable == "PfSPZ_CD8_25") %>%
+  ggplot(., aes(x = dose_group2, y = pct_of_live_lymphs, color = dose_group2)) +
+  geom_boxplot() +
+  geom_quasirandom() +
+  stat_compare_means(method = "wilcox.test") + 
+  theme_bw()
+
+pfspz_cd8 <- pfspz_cd8 %>%
+  mutate(cd8_25_greater_0 = factor(ifelse(PfSPZ_CD8_25>0, "detected", "not detected"))) %>%
+  mutate(cd8_LFC_cat = factor(ifelse(PfSPZ_CD8_log2FC > 0, "increased", "not increased")))
+summary(pfspz_cd8$cd8_LFC_cat)
+table(pfspz_cd8$cd8_LFC_cat, pfspz_cd8$dose_group)
+pfspz_cd8_vax_only <- pfspz_cd8 %>%
+  filter(dose_group != "Placebo") %>%
+  droplevels()
+table(pfspz_cd8_vax_only$cd8_25_greater_0, pfspz_cd8_vax_only$Outcome)
+```
+
+
+```{r combine facs with gene expression}
+combo_dat <- pfspz_cd8 %>%
+  left_join(., exprs(x) %>%
+              t() %>%
+              as.data.frame() %>%
+              rownames_to_column(var = "PATID") %>%
+              mutate(PATID = gsub("_0", "", PATID)),
+            by = "PATID") %>%
+  as.data.frame()
+
+cor_res <- combo_dat_foo <- cor_dat <- c()
+cor_method <- "spearman" #"spearman", "pearson", "kendall"
+for(h in names(summary(combo_dat$dose_group))){
+  combo_dat_foo[[h]]<- combo_dat[which(combo_dat$dose_group == h),]
+  cor_dat[[h]] <- data.frame(feature = names(combo_dat_foo[[h]])[-c(1:9)], #always check to see which columns need to be excluded
+                      tau = rep(0, length(names(combo_dat_foo[[h]])[-c(1:9)])),
+                      pval = rep(0, length(names(combo_dat_foo[[h]])[-c(1:9)])))
+  rownames(cor_dat[[h]]) <- cor_dat[[h]]$feature
+  for(i in names(combo_dat_foo[[h]])[-c(1:9)]){
+    cor_res[[h]] <- cor.test(x = combo_dat_foo[[h]]$PfSPZ_CD8_25,
+                             y = combo_dat_foo[[h]][,i], 
+                             method = cor_method, exact = FALSE)
+    cor_dat[[h]][i,]$feature <- i
+    cor_dat[[h]][i,]$tau <- cor_res[[h]]$estimate
+    cor_dat[[h]][i,]$pval <- cor_res[[h]]$p.value
+  }
+  cor_dat[[h]] <- cor_dat[[h]] %>%
+  left_join(., fData(x) %>%
+              dplyr::select(EnsemblID, GeneSymbol) %>%
+              dplyr::rename(feature = "EnsemblID"),
+            by = "feature") %>%
+  mutate(fdr = p.adjust(pval, method = "fdr")) %>%
+  dplyr::select(GeneSymbol, everything()) %>%
+  mutate(RankMetric = sign(tau)*-(log10(pval))) %>%
+  arrange(desc(RankMetric))
+}
+
+
+# sanity checks
+# ggplot(combo_dat_foo$`1.8 x 10^6 PfSPZ`, aes(x = ENSG00000163913, y = PfSPZ_CD8_25)) +
+#   geom_point() +
+#   geom_smooth(method = "lm", se=TRUE) +
+#   stat_cor(method="kendall", cor.coef.name = "tau") +
+#   theme_bw()
+# 
+# ggplot(combo_dat_foo$Placebo, aes(x = ENSG00000060642, y = PfSPZ_CD8_25)) +
+#   geom_point() +
+#   geom_smooth(method = "lm", se=TRUE) +
+#   stat_cor(method="kendall", cor.coef.name = "tau") +
+#   theme_bw()
+  
+```
+
+### Apply GSEA
+
+```{r apply fgsea, warning=FALSE, message=FALSE}
+devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/NamedGeneRankList2GseaTable.R?raw=TRUE")
+res <- ranks <- bound_df_GSEA <- c()
+for(h in names(summary(combo_dat$dose_group))){
+  res[[h]] <- cor_dat[[h]] %>%
+    dplyr::select(GeneSymbol, RankMetric) %>%
+    na.omit() %>% 
+    distinct() %>% 
+    group_by(GeneSymbol) %>% 
+    summarize(RankMetric = mean(RankMetric)) %>%
+    arrange(desc(RankMetric)) 
+  ranks[[h]] <- deframe(res[[h]])
+  #ignore warning about ties since there is only one duplicated RankMetric ranks[DescTools::AllDuplicated(ranks)]
+  #AC069547.1 RP11-521C22.3 
+  #0.0001374268  0.0001374268
+  bound_df_GSEA[[h]] <- NamedGeneRankList2GseaTable(rankedgenes = ranks[[h]], geneset = "bloodmodules", output_directory = tempdir(), filename_prefix = "GSEA_baseline_CPM_PfSPZ_CD8_25_AllGroups", minSize = 20, fixed_seed = TRUE)
+}
+bound_df_GSEA_all <- bind_rows(bound_df_GSEA, .id = "dose_group")
+```
+
+### Plot GSEA results as bar plot
+
+Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and log2FC of % PfSPZ-specific CD8 of lymphocytes at 2-weeks post-vaccination.
+
+```{r arrange data for plots, echo = FALSE}
+myfunction <- function(leadingEdge) { length(unlist(strsplit(leadingEdge, ", "))) }
+myFDRcutoff <- 0.01
+
+myModules <- c("lowBTMs", "highBTMs")
+myGSEAClusterPlotDat <- bound_df_GSEA_all %>%
+  filter(padj < myFDRcutoff) %>%
+  filter(module_type %in% myModules) %>%
+  dplyr::mutate(edges = purrr::pmap_dbl(list(leadingEdge), myfunction)) %>%
+  dplyr::mutate(bubblelabel = paste(edges,size, sep = "/")) %>%
+  group_by(module_type) %>%
+    arrange(module_type, desc(NES), padj) %>%
+    dplyr::select(module_type, pathway, edges, size, bubblelabel, NES, padj, dose_group) %>%
+  ungroup() %>%
+  filter(!grepl("TBA", pathway)) %>%
+  mutate(pathway = gsub("gd", "γδ", pathway)) %>%
+  mutate(pathway = gsub("Vd2", "Vδ2", pathway)) %>%
+  mutate(pathway = gsub("Vg", "Vγ", pathway)) %>%
+  mutate(pathway = gsub("HALLMARK_", "", pathway)) %>%
+  mutate(pathway = gsub("_", " ", pathway)) %>%
+  mutate(neglogpadj = -log10(padj)) %>%
+  arrange(neglogpadj) %>%
+  mutate(pathway = fct_reorder(pathway, NES, .desc=TRUE)) %>%
+  mutate(pathway = fct_reorder(pathway, neglogpadj)) %>%
+  mutate(TextLabelColor = ifelse(module_type == "lowBTMs", scales::muted("red"),
+                                 ifelse(module_type == "highBTMs", scales::muted("blue"),
+                                        ifelse(module_type == "MonacoModules", "black","orange")))) %>%
+  arrange(desc(neglogpadj))
+
+myGSEAClusterPlot <- myGSEAClusterPlotDat %>%
+  mutate(dose_group = factor(dose_group, levels = c("Placebo", "4.5 x 10^5 PfSPZ", "9.0 x 10^5 PfSPZ", "1.8 x 10^6 PfSPZ"))) %>%
+  filter(dose_group %in% c("Placebo", "1.8 x 10^6 PfSPZ")) %>%
+  droplevels() %>%
+  ggplot(., aes(x = NES, y = pathway, fill = neglogpadj)) +
+  geom_bar(stat = 'identity') + 
+  viridis::scale_fill_viridis(option= "A", begin = 0.25, end = 0.75, alpha = 0.8, direction = -1, name = "neglogpadj") +
+  theme_bw(base_family = "Arial", base_size = 14) +
+  theme(legend.position = "bottom",
+        strip.background = element_blank()) +
+  facet_wrap(~relevel(dose_group, ref = "1.8 x 10^6 PfSPZ"), ncol = 2)
+```
+
+```{r print GSEA plot, fig.align='center', fig.height=7, fig.width=9, fig.align='center', echo=FALSE}
+addSmallLegend <- function(myPlot, pointSize = 6, textSize = 6, spaceLegend = 1) {
+    myPlot +
+        guides(shape = guide_legend(override.aes = list(size = pointSize)),
+               color = guide_legend(override.aes = list(size = pointSize))) +
+        theme(legend.title = element_text(size = textSize), 
+              legend.text  = element_text(size = textSize),
+              legend.key.size = unit(spaceLegend, "lines"))
+}
+cairo_pdf(filename = paste0("/Volumes/GoogleDrive/My Drive/Manuscripts/KSPZV1 Manuscript/Med Revised Submission 2022/Figures/Revised Figure Panels/Fig 7X Placebo and highDose GSEA PfSPZ CD8 ", cor_method,".pdf"),
+          width = 9, height = 7)
+print(addSmallLegend(myGSEAClusterPlot))
+dev.off
+```
+
+## Module Expression Scores Method
+
+### Collapse to Pathway Activity Scores
+
+```{r collapse, echo=FALSE}
+devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/Gene2ModuleExpressionScores.R?raw=TRUE")
+lowBTM_dat <- Gene2ModuleExpressionScores(gene_expression_dat = x, module_list = "lowBTMs", summary_stat = median)
+hiBTM_dat <- Gene2ModuleExpressionScores(gene_expression_dat = x, module_list = "highBTMs", summary_stat = median)
+
+#remove zero variance
+# removeLowVar1 <- function(df, variance_threshold){
+#   foo <- df %>%
+#     as.matrix() %>%
+#     t() %>%
+#     as.data.frame() 
+#   t(foo[, sapply(foo, var) > variance_threshold])
+# }
+# 
+# dim(lowBTM_dat)
+# lowBTM_dat_filtered <- removeLowVar1(lowBTM_dat, 0.1)
+# dim(lowBTM_dat_filtered)
+# dim(hiBTM_dat)
+# hiBTM_dat_filtered <- removeLowVar1(hiBTM_dat, 0.1)
+# dim(hiBTM_dat_filtered)
+```
+
+### Read in FACS and merge with BTMs
+
+```{r convert MES to long format }
+hiBTM_dat_long <- hiBTM_dat_filtered %>%
+  as.matrix() %>%
+  scale() %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "module") %>%
+  pivot_longer(cols = 2:ncol(.), names_to = "PATID", values_to = "expression") %>%
+  mutate(PATID = gsub("_.*", "", PATID))
+
+lowBTM_dat_long <- lowBTM_dat_filtered %>%
+  as.matrix() %>%
+  scale() %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "module") %>%
+  pivot_longer(cols = 2:ncol(.), names_to = "PATID", values_to = "expression") %>%
+  mutate(PATID = gsub("_.*", "", PATID))
+```
+
+```{r make combo}
+combo <- alldat %>%
+  left_join(., hiBTM_dat_long,
+            by = "PATID") %>%
+  mutate(module_type = "high BTM")
+
+combo2 <- alldat %>%
+  left_join(., lowBTM_dat_long,
+            by = "PATID") %>%
+  mutate(module_type = "low BTM")
+
+combo <- bind_rows(combo, combo2)
+
+combo_0 <- combo %>%
+  filter(Timepoint == 0) %>%
+  dplyr::rename(value_0 = "value") %>%
+  dplyr::select(-Timepoint)
+
+combo_25 <- combo %>%
+  filter(Timepoint == 25) %>%
+ dplyr:: rename(value_25 = "value") %>%
+  dplyr::select(-Timepoint)
+
+combo <- combo_0 %>%
+  left_join(., combo_25) %>%
+  mutate(value_log2FC = log2((value_25+0.00001)/(value_0+0.00001))) %>% #calculate fold change, adding small prior
+  dplyr::select(PATID, module_type, module, expression, feature, value_0, value_25, value_log2FC)%>%
+  filter_at(vars(value_0, value_25), all_vars(!is.na(.))) %>%
+  filter_at(vars(value_0, value_25), all_vars(!is.infinite(.))) %>%
+  mutate(zscore_log2FC = scale(value_log2FC),
+         zscore_value_25 = scale(value_25))
+```
+
+
+### Plot relationship between baseline inflammatory signatures and PfSPZ-specific CD8
+
+high BTMs
+
+```{r plot, fig.align='center', fig.width=10, fig.height=6}
+library(ggpubr)
+options(scipen=999) # no scientific notation
+
+#summary(factor(combo$module))
+combo %>%
+  filter(module %in% c("INFLAMMATORY/TLR/CHEMOKINES", "DC ACTIVATION", "MONOCYTES", "ANTIGEN PRESENTATION")) %>%
+  ggplot(., aes(x = value_log2FC, y = expression)) +
+  geom_point() + 
+  geom_smooth(method = "lm", se=TRUE) +
+  stat_cor(label.y = -1,method="spearman", cor.coef.name = "rho") +
+  theme_bw() +
+  facet_grid(feature~module, scales = "free")
+```
+
+low BTMs
+
+```{r plot 2, fig.align='center', fig.width=10, fig.height=60}
+library(ggpubr)
+options(scipen=999) # no scientific notation
+combo %>%
+  filter(module_type == "low BTM") %>%
+  filter(grepl("TLR", module) |
+           grepl("myeloid", module) |
+           grepl("inflamm", module) |
+           grepl("DC", module) |
+           grepl("monocyte", module)) %>%
+  ggplot(., aes(x = value_log2FC, y = expression)) +
+  geom_point() + 
+  geom_smooth(method = "lm", se=TRUE) +
+  stat_cor(label.y = -1,method="spearman", cor.coef.name = "rho") +
+  theme_bw() +
+  facet_grid(module~feature, scales = "free")
+```

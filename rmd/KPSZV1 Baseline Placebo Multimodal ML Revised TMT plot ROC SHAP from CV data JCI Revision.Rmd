@@ -1,0 +1,902 @@
+---
+title: "KSPZV1 baseline placebo multimodal ML- visualize xgboost ML results, JCI revision (Figure 6E)"
+author: "Tuan M. Tran"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document :
+    theme: cerulean
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r links discussing approaches, include=FALSE, eval=FALSE}
+#Links discussing best approaches:
+# https://stats.stackexchange.com/questions/264533/how-should-feature-selection-and-hyperparameter-optimization-be-ordered-in-the-m
+```
+
+# Objective
+
+Visualization of xgboost ML with 4-fold cross-validation of full dataset.
+
+# Approach
+
+Plot ROC curves, confusion matrices, and SHAP plots from top n models using xgboost results derived from "KPSZV1 Baseline Placebo multimodal ML xgb nested fs cv on full set JCI Revision.Rmd".
+
+```{r libraries, message=FALSE}
+library(xgboost)
+library(dplyr)
+library(tidyverse)
+library(pROC)
+library(caret)
+library(doMC)
+library(data.table)
+library(xgboost)
+library(mlr)
+library(ggpubr)
+library(tictoc)
+library(Biobase)
+library(googledrive)
+library(parallel)
+library(parallelMap)
+parallelStartSocket(cpus = detectCores())
+```
+```{r set local paths, include=FALSE, eval=FALSE, echo=FALSE}
+datadir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/kspzv1-systems-analysis/"
+datadir2 <- "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/"
+plotdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/"
+plot_dat_dir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/"
+```
+
+### Load feature data
+
+```{r read placebo baseline features local, include=FALSE, eval=FALSE, echo=FALSE}
+placebo_features_class <- read_rds(file = paste0(datadir2, "placebo_baseline_class_features_scaled_imputed.rds"))
+train_features <- placebo_features_class %>%
+  dplyr::select(-c(sex, site))
+```
+
+```{r read high dose baseline features from google drive, message=FALSE, warning=FALSE}
+#from google drive
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1QXNOms5dHbJtjV8HRRzGpjY4ErjghDPi"), path = temp, overwrite = TRUE)
+placebo_features_class <- readRDS(file = dl$local_path)
+train_features <- placebo_features_class %>%
+  dplyr::select(-c(sex, site))
+```
+
+### Load ML results
+
+This is a large file.
+
+```{r load cv results for best iteration local, fig.align='center', fig.width=6, fig.height=3.75, include=FALSE, eval=FALSE, echo=FALSE}
+#readin data saved from above
+datadir <- "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/ML results Tuan/"
+ 
+all_folds_2500_runs <- load(paste0(datadir,
+                                  "full_placebo_baseline_4fold_cv_2500_runs/",
+                                  "all_folds_data_seed_4917_runs_2500_16_Oct_2023_full.RData"))
+per_run_res_2500_runs <- readxl::read_xlsx(paste0(datadir,
+                                  "full_placebo_baseline_4fold_cv_2500_runs/",
+                                  "cv_results_all_runs_all_folds_seed_4917_runs_2500_htune_iters_500_16_Oct_2023_full.xlsx"))
+summarized_res_2500_runs <- readxl::read_xlsx(paste0(datadir,
+                                  "full_placebo_baseline_4fold_cv_2500_runs/",
+                                  "cv_summarized_res_all_folds_seed_4917_runs_2500_htune_iters_500_16_Oct_2023_full.xlsx"))
+```
+
+```{r oad cv results for best iteration  google drive, message=FALSE, warning=FALSE}
+#from google drive
+temp <- tempfile(fileext = ".Rdata")
+dl <- drive_download(
+  as_id("1TVo6vkCUnKTVWLtwu16AkI2BWhwXXAqt"), path = temp, overwrite = TRUE)
+all_folds_2500_runs <- load(file = dl$local_path)
+
+temp <- tempfile(fileext = ".xlsx")
+dl <- drive_download(
+  as_id("1Tf5d0LhtuZJIPbuvfO9Y6nUTCpxV918l"), path = temp, overwrite = TRUE)
+per_run_res_2500_runs <- readxl::read_xlsx(dl$local_path)
+
+temp <- tempfile(fileext = ".xlsx")
+dl <- drive_download(
+  as_id("1UJwX9Kc8eTqpLAfHOpuvhsutU5dVKQ6m"), path = temp, overwrite = TRUE)
+summarized_res_2500_runs <- readxl::read_xlsx(dl$local_path)
+```
+
+### Determine across-fold performance metrics (accuracy, AUC, Brier score, kappa, logless) and select best performing placebo baseline models
+
+```{r determine across fold AUC and kappa, message=FALSE, warning=FALSE}
+smooth <- FALSE
+runs_to_test <- summarized_res_2500_runs[summarized_res_2500_runs$mean_cv_accuracy>.66,]$run #select only the placebo PfSPZ models with accuracy >66%.
+#runs_to_test <- c("run 211", "run 2222", "run 671")
+
+best_run <- best_combo <- all_folds_response <- all_folds_predictor <- roc_dat <- auc <- confusion_mat <- predictor_dichotomous <- c()
+across_fold_performance <- logloss_list <- brier_list <- c()
+for(j in runs_to_test){
+  best_run[[j]] <- per_run_res_2500_runs[per_run_res_2500_runs$run==j,] %>%
+    group_by(run) %>%
+    slice_max(AUC) %>%
+    distinct(Features) %>%
+    pull(var = run)
+  best_combo[[j]] <- per_run_res_2500_runs[per_run_res_2500_runs$run==j,] %>%
+    group_by(run) %>%
+    slice_max(AUC) %>%
+    distinct(Features) %>%
+    pull(var = Features)
+  #calculate predictive accuracy across all 4 folds
+  all_folds_response[[j]] <- c(fold1[[best_run[[j]]]]$predictor_data$class,
+                               fold2[[best_run[[j]]]]$predictor_data$class,
+                               fold3[[best_run[[j]]]]$predictor_data$class,
+                               fold4[[best_run[[j]]]]$predictor_data$class)
+  all_folds_predictor[[j]] <- c(fold1[[best_run[[j]]]]$predictor_data$pred.prob,
+                            fold2[[best_run[[j]]]]$predictor_data$pred.prob,
+                            fold3[[best_run[[j]]]]$predictor_data$pred.prob,
+                            fold4[[best_run[[j]]]]$predictor_data$pred.prob)
+  roc_dat[[j]] <- pROC::roc(response = all_folds_response[[j]],
+                            predictor = all_folds_predictor[[j]],
+                            smooth = smooth) 
+  auc[[j]] <- roc_dat[[j]]$auc %>% as.numeric(.) %>% signif(.,digits=3)
+  predictor_dichotomous[[j]]  <- ifelse(all_folds_predictor[[j]]  > 0.5,1,0)
+  #0 = infected, 1 = protected
+  predictor_dichotomous[[j]]   <- factor(ifelse(predictor_dichotomous[[j]]==1, "protected", "infected")) 
+  confusion_mat[[j]] <- caret::confusionMatrix(predictor_dichotomous[[j]], all_folds_response[[j]], positive = "protected")
+  logloss_list[[j]] <- MLmetrics::LogLoss(all_folds_predictor[[j]], as.numeric(all_folds_response[[j]])-1)
+  brier_list[[j]] <- mlr::measureBrier(all_folds_predictor[[j]], all_folds_response[[j]], "infected", "protected")
+  across_fold_performance[[j]] <- confusion_mat[[j]]$overall
+} 
+
+across_fold_performance_df <- bind_rows(across_fold_performance, .id = "run") %>%
+  arrange(desc(Kappa))  %>%
+  mutate(Kappa_rank = 1:nrow(.)) %>%
+  arrange(desc(Accuracy)) %>%
+  mutate(Accuracy_rank = 1:nrow(.))
+auc_df_placebo <- bind_rows(auc, .id = "run") %>%
+  pivot_longer(., cols = everything(), names_to = "run", values_to = "AUC") %>%
+  arrange(desc(AUC))  %>%
+  mutate(AUC_rank = 1:nrow(.))
+logloss_df <- bind_rows(logloss_list, .id = "run") %>%
+  pivot_longer(., cols = everything(), names_to = "run", values_to = "LogLoss") %>%
+  arrange(LogLoss)  %>%
+  mutate(LogLoss_rank = 1:nrow(.))
+brier_df <- bind_rows(brier_list, .id = "run") %>%
+  pivot_longer(., cols = everything(), names_to = "run", values_to = "BrierScore") %>%
+  mutate(BrierScore = signif(BrierScore, 3)) %>%
+  arrange(BrierScore) %>%
+  mutate(BrierScore_rank = 1:nrow(.))
+
+across_fold_perform_placebo <- auc_df_placebo %>%
+  left_join(., across_fold_performance_df, by = "run") %>%
+  left_join(., summarized_res_2500_runs,
+            by = "run") %>%
+  left_join(., logloss_df,
+            by = "run") %>%
+  left_join(., brier_df,
+            by = "run") %>%
+  mutate(AverageRank = (Accuracy_rank + AUC_rank + BrierScore_rank + Kappa_rank + LogLoss_rank)/5) %>%
+  dplyr::select(run, Features, AverageRank, BrierScore_rank, Kappa_rank, LogLoss_rank, AUC_rank, Accuracy_rank, AUC, BrierScore, LogLoss, Kappa, Accuracy:McnemarPValue, mean_cv_AUC:sd_cv_accuracy) %>%
+  group_by(run) %>%
+  slice_head(n=1) %>%
+  ungroup() %>%
+  arrange(AverageRank)
+
+#clean up feature names
+# across_fold_perform_placebo <- across_fold_perform_placebo %>%
+#   mutate(Features =  gsub("CSP_specific_IgG_", "CSP-specific IgG_", Features)) %>% 
+#   mutate(Features =  gsub("FACS_|_innate_BTM|_highBTM|_monaco|CytokineObsConc_", "", Features)) %>%   
+#   mutate(Features =  gsub("PfSPZ", "Pf", Features)) %>% 
+#   mutate(Features =  gsub("_of_live_leukocytes", "_of_live_PBMCs", Features)) %>% 
+#   mutate(Features =  gsub("_", " ", Features))
+```
+
+```{r save rank values, include=FALSE, echo=FALSE, eval=FALSE}
+writexl::write_xlsx(across_fold_perform_placebo, paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Supplementary Tables JCI resubmission/","Table S6 across folds xgb performance placebo baseline.xlsx"))
+```
+
+### Arrange data and plot AUROC curves 
+
+```{r arrange data for roc plots, message=FALSE, warning=FALSE}
+top_n <- 4
+across_fold_perform_placebo_rank_by_AverageRank <- across_fold_perform_placebo %>%
+  arrange(AverageRank) %>%
+  drop_na()
+select_data <- across_fold_perform_placebo_rank_by_AverageRank[c(1:top_n),]
+data.labels <- data.frame("name" = select_data[1:4,]$run,
+                          "features" = select_data[1:4,]$Features,
+                          "brier" = select_data[1:4,]$BrierScore,
+                          "auc" = select_data[1:4,]$AUC,
+                          "kappa" = select_data[1:4,]$Kappa,
+                          "logloss" = select_data[1:4,]$LogLoss)
+roc_plot_dat <- roc_dat[select_data[1:4,]$run] 
+roc_plots <- ggroc(roc_plot_dat, legacy.axes = TRUE, size = 1.5) +
+  theme_bw() +
+  scale_color_brewer("", palette = "Set1", type = "qual") +
+  scale_fill_brewer("", palette = "Set1", type = "qual") +
+  theme(legend.position = "none") +
+  geom_text(data = data.labels[1,], aes(0.875, 0.25, label = paste0(name, ", Brier=", brier, ", AUC=", auc)), hjust=1, show_guide=FALSE) +
+  geom_text(data = data.labels[2,], aes(0.875, 0.2, label = paste0(name, ", Brier=", brier, ", AUC=", auc)), hjust=1, show_guide=FALSE) +
+  geom_text(data = data.labels[3,], aes(0.875, 0.15, label = paste0(name, ", Brier=", brier, ", AUC=", auc)), hjust=1, show_guide=FALSE) +
+  geom_text(data = data.labels[4,], aes(0.875, 0.1, label = paste0(name, ", Brier=", brier, ", AUC=", auc)), hjust=1, show_guide=FALSE) +
+  #geom_text(data = data.labels[5,], aes(0.875, 0.05, label = paste("AUC =", auc)), hjust=1, show_guide=FALSE) +
+  theme(plot.margin = unit(c(1,1,1,1), "cm")) +
+  geom_abline(slope = 1, linetype = "dotted", color = "gray")
+```
+
+```{r plot roc, fig.align='center', fig.height=6, fig.width=6}
+roc_plots
+```
+
+```{r save rocplot data, include=FALSE, message=FALSE, eval=FALSE, echo=FALSE}
+writexl::write_xlsx(roc_plots$data, paste0(plot_dat_dir, "Fig 6E baseline lacebo ROC plot.xlsx"))
+```
+
+### Plot confusion matrices for placebo baseline models
+
+```{r confusion matrix plots web ref, echo=FALSE, include=FALSE, eval=FALSE}
+#https://stackoverflow.com/questions/46063234/how-to-produce-a-confusion-matrix-and-find-the-misclassification-rate-of-the-naï
+#https://stats.stackexchange.com/questions/82162/cohens-kappa-in-plain-english#:~:text=%3C0%20as%20indicating%20no%20agreement,1%20as%20almost%20perfect%20agreement.&text=%3E0.75%20as%20excellent%2C%200.40%20to,and%20%3C0.40%20as%20poor.%22
+```
+
+```{r make confusion matrix plots placebo baseline, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(scales)
+
+ggplotConfusionMatrix <- function(m){
+  mytitle <- paste(
+    "accuracy", percent_format()(m$overall[1]),
+                   "kappa", percent_format()(m$overall[2]))
+  mydata <- as.data.frame(m$table) %>%
+    mutate(Prediction = ifelse(Prediction == "infected", "NP", "P")) %>%
+    mutate(Reference = ifelse(Reference == "infected", "NP", "P"))
+  p <- ggplot(data = mydata,
+           aes(x = Reference, y = Prediction)) +
+    geom_tile(aes(fill = log(Freq)), colour = "white") +
+    scale_fill_gradient(low = "white", high = "steelblue") +
+    geom_text(aes(x = Reference, y = Prediction, label = Freq, size = 24)) +
+    ggtitle(mytitle) +
+    ylab("predicted") +
+    xlab("actual outcome") +
+    theme(legend.position = "none",
+          panel.background = element_blank(),
+          plot.background = element_blank(),
+          axis.ticks = element_blank(),
+          axis.title = element_text(color = "black", size = 10),
+          axis.text = element_text(color = "black", size = 10),
+          title = element_text(size = 9),) +
+    theme(plot.margin = unit(c(0.5,0.45,0.01,0.4), "cm"))
+  return(p)
+}
+```
+
+```{r plot placebo confusion matrices, fig.align='center', fig.height=2, fig.width=8}
+my_models <- select_data[1:4,]$run #ranked by average rank
+
+my_plots <- list(ggplotConfusionMatrix(confusion_mat[[my_models[1]]]),
+              ggplotConfusionMatrix(confusion_mat[[my_models[2]]]),
+              ggplotConfusionMatrix(confusion_mat[[my_models[3]]]),
+              ggplotConfusionMatrix(confusion_mat[[my_models[4]]]))
+names(my_plots) <- my_models
+
+my_placebo_confus_mat_plot_top <- ggarrange(plotlist = my_plots[1:2],
+                                         labels = names(my_plots[1:2]),
+                                         font.label = list(size=14, face="plain"),
+                                         ncol = 2,
+                                         hjust = -0.1)
+my_placebo_confus_mat_plot_bottom <- ggarrange(plotlist = my_plots[3:4],
+                                         labels = names(my_plots[3:4]),
+                                         font.label = list(size=14, face="plain"),
+                                         ncol = 2,
+                                         hjust = -0.1)
+my_placebo_confus_mat_plot_all <- ggarrange(my_placebo_confus_mat_plot_top,
+                                             my_placebo_confus_mat_plot_bottom,
+                                             nrow=2)
+```
+
+```{r plot my_placebo_confus_mat_plot_all, fig.align='center', fig.height=6, fig.width=5}
+my_placebo_confus_mat_plot_all
+```
+
+```{r save confusion matrix data, include=FALSE, message=FALSE, eval=FALSE, echo=FALSE}
+foo_ids <- c(rep(names(my_plots[1]), 4),
+             rep(names(my_plots[2]), 4),
+             rep(names(my_plots[3]), 4),
+             rep(names(my_plots[4]), 4))
+foo <- bind_rows(my_plots[[1]]$data,
+          my_plots[[2]]$data,
+          my_plots[[3]]$data,
+          my_plots[[4]]$data)
+foo$model <- foo_ids
+writexl::write_xlsx(foo, paste0(plot_dat_dir,"Fig 6E baseline placebo confusion matrices.xlsx"))
+```
+
+### Feature importance by number of appearances in top %1 models
+
+```{r feature importance by number of appearances in top n models, fig.align='center', fig.width=5, fig.height=4.5}
+addSmallLegend <- function(myPlot, pointSize = 0.75, textSize = 6, spaceLegend = 0.75) {
+    myPlot +
+        guides(shape = guide_legend(override.aes = list(size = pointSize)),
+               color = guide_legend(override.aes = list(size = pointSize))) +
+        theme(legend.title = element_text(size = textSize), 
+              legend.text  = element_text(size = textSize),
+              legend.key.size = unit(spaceLegend, "lines"))
+}
+
+#filter select data by performance metric
+select_data <- across_fold_perform_placebo_rank_by_AverageRank %>%
+  arrange(AverageRank) %>%
+  slice_head(n=25)
+
+#build shap data from results of each fold
+shap_prep_fold1 <- shap_prep_fold2 <- shap_prep_fold3 <- shap_prep_fold4 <- shap_prep_rbind <- shap_plots <- c()
+for(k in rev(select_data$run)){
+  shap_prep_fold1[[k]] <- shap.prep(xgb_model = fold1[[k]]$downselected_xgb_results,
+                                    X_train = as.matrix(fold1[[k]]$predictor_data[,fold1[[k]]$downselected_xgb_results$feature_names]))
+  shap_prep_fold2[[k]] <- shap.prep(xgb_model = fold2[[k]]$downselected_xgb_results,
+                                    X_train = as.matrix(fold2[[k]]$predictor_data[,fold2[[k]]$downselected_xgb_results$feature_names]))
+  shap_prep_fold3[[k]] <- shap.prep(xgb_model = fold3[[k]]$downselected_xgb_results,
+                                    X_train = as.matrix(fold3[[k]]$predictor_data[,fold3[[k]]$downselected_xgb_results$feature_names]))
+  shap_prep_fold4[[k]] <- shap.prep(xgb_model = fold4[[k]]$downselected_xgb_results,
+                                    X_train = as.matrix(fold4[[k]]$predictor_data[,fold4[[k]]$downselected_xgb_results$feature_names]))
+  shap_prep_rbind[[k]] <- rbind(shap_prep_fold1[[k]],
+                           shap_prep_fold2[[k]],
+                           shap_prep_fold3[[k]],
+                           shap_prep_fold4[[k]]) %>%
+    group_by(variable) %>%
+    mutate(ID = 1:n()) %>%
+    ungroup()
+  levels(shap_prep_rbind[[k]]$variable) <- gsub("FACS_|_innate_BTM|_highBTM|_monaco|CytokineObsConc_", "", levels(shap_prep_rbind[[k]]$variable))
+  levels(shap_prep_rbind[[k]]$variable) <- gsub("PfSPZ", "Pf", levels(shap_prep_rbind[[k]]$variable))
+  levels(shap_prep_rbind[[k]]$variable) <- gsub("_of_live_leukocytes", "_of_live_PBMCs", levels(shap_prep_rbind[[k]]$variable))
+  levels(shap_prep_rbind[[k]]$variable) <- gsub("_", " ", levels(shap_prep_rbind[[k]]$variable))  
+  shap_plots[[k]] <- shap.plot.summary(shap_prep_rbind[[k]], scientific = FALSE)
+}
+shap_prep_rbind_df <- bind_rows(shap_prep_rbind, .id = "model")
+
+number_models <- sum(summary(factor(unique(shap_prep_rbind_df$model))))
+
+var_appearances <- shap_prep_rbind_df %>%
+  dplyr::select(model,variable) %>%
+  distinct() %>%
+  group_by(variable) %>%
+  summarize(proportion=n()/number_models, n=n()) %>%
+  ungroup() %>%
+  arrange(desc(n))
+
+foo <- shap_long_iris %>%
+  group_by(variable) %>%
+  summarize(mean = mean(value))
+
+
+SHAP_feature_correlations <- shap_prep_rbind_df %>%
+  dplyr::select(model,variable, value, rfvalue) %>%
+  distinct() %>%
+  group_by(model, variable) %>% 
+  summarise(r = cor(value, rfvalue)) %>%
+  ungroup() %>%
+  group_by(variable) %>%
+  summarize(mean_r=mean(r))
+
+var_appearances <- var_appearances %>%
+  left_join(., SHAP_feature_correlations,
+            by = "variable")
+
+feature_importance_plot <- var_appearances %>%
+  filter(n>1) %>%
+  ggplot(., aes(x= fct_reorder(variable, n, .desc = FALSE))) +
+  geom_bar(aes(y=proportion, fill=mean_r), stat="identity") +
+  scale_fill_gradient2(low = "darkblue", mid = "white",
+                       high = "darkred",
+                       midpoint = 0,limits = c(-1,1)) +
+  theme_bw() +
+  coord_flip() +
+  xlab("features") +
+  ylab("appearances") + 
+  labs(fill = "R") +
+  scale_y_continuous(labels = scales::percent, limits = c(0,1)) +
+  theme(legend.position = "top",
+        axis.text = element_text(colour = "black"))
+
+feature_importance_plot <- addSmallLegend(feature_importance_plot)
+feature_importance_plot
+```
+
+```{r save feature importance plot, include=FALSE, message=FALSE, echo=FALSE, eval=FALSE}
+pdf(paste0(plotdir, "Figure 6E placebo baseline feature by pct appearance barplot AverageRank.pdf"),
+    width = 5.9, height = 3.4)
+addSmallLegend(feature_importance_plot)
+dev.off()
+```
+
+```{r save feature importance plot data, include=FALSE, message=FALSE, eval=FALSE, echo=FALSE}
+writexl::write_xlsx(feature_importance_plot$data, paste0(plot_dat_dir,"Fig 6E baseline placebo feature importance barplot.xlsx"))
+```
+
+
+```{r shared stable features}
+### Shared stable features between baseline 1.8x10^6 PfSPZ and placebo
+
+high_dose_stable_features <- readxl::read_excel("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Fig 6B baseline high-dose PfSPZ feature importance barplot.xlsx")
+
+placebo_stable_features <- readxl::read_excel("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Fig 6E baseline placebo feature importance barplot.xlsx")
+
+shared_features <- intersect(high_dose_stable_features$variable, placebo_stable_features$variable)
+
+shared_high_dose <- high_dose_stable_features %>%
+  filter(variable %in% shared_features)
+
+shared_placebo <- placebo_stable_features %>%
+  filter(variable %in% shared_features)
+```
+
+```{r arrange shapley plot data from existing 4-fold cv data, fig.align='center', fig.width=8, fig.height=6}
+#see vignettes in https://liuyanguu.github.io/post/2019/07/18/visualization-of-shap-for-xgboost/
+#note that 0=infected (not protected) and 1 = protected
+
+#filter select data by top n
+select_data <- across_fold_perform_placebo_rank_by_AverageRank[c(1:top_n),]
+
+#build shap data from results of each fold
+shap_prep_fold1 <- shap_prep_fold2 <- shap_prep_fold3 <- shap_prep_fold4 <- shap_prep_rbind <- shap_plots <- c()
+for(k in rev(select_data$run)){
+  shap_prep_fold1[[k]] <- shap.prep(xgb_model = fold1[[k]]$downselected_xgb_results,
+                                    X_train = as.matrix(fold1[[k]]$predictor_data[,fold1[[k]]$downselected_xgb_results$feature_names]))
+  shap_prep_fold2[[k]] <- shap.prep(xgb_model = fold2[[k]]$downselected_xgb_results,
+                                    X_train = as.matrix(fold2[[k]]$predictor_data[,fold2[[k]]$downselected_xgb_results$feature_names]))
+  shap_prep_fold3[[k]] <- shap.prep(xgb_model = fold3[[k]]$downselected_xgb_results,
+                                    X_train = as.matrix(fold3[[k]]$predictor_data[,fold3[[k]]$downselected_xgb_results$feature_names]))
+  shap_prep_fold4[[k]] <- shap.prep(xgb_model = fold4[[k]]$downselected_xgb_results,
+                                    X_train = as.matrix(fold4[[k]]$predictor_data[,fold4[[k]]$downselected_xgb_results$feature_names]))
+  shap_prep_rbind[[k]] <- rbind(shap_prep_fold1[[k]],
+                           shap_prep_fold2[[k]],
+                           shap_prep_fold3[[k]],
+                           shap_prep_fold4[[k]]) %>%
+    group_by(variable) %>%
+    mutate(ID = 1:n()) %>%
+    ungroup()
+  levels(shap_prep_rbind[[k]]$variable) <- gsub("FACS_|_innate_BTM|_highBTM|_monaco|CytokineObsConc_", "", levels(shap_prep_rbind[[k]]$variable))
+  levels(shap_prep_rbind[[k]]$variable) <- gsub("PfSPZ", "Pf", levels(shap_prep_rbind[[k]]$variable))
+  levels(shap_prep_rbind[[k]]$variable) <- gsub("_of_live_leukocytes", "_of_live_PBMCs", levels(shap_prep_rbind[[k]]$variable))
+  levels(shap_prep_rbind[[k]]$variable) <- gsub("_", " ", levels(shap_prep_rbind[[k]]$variable))  
+  shap_plots[[k]] <- shap.plot.summary(shap_prep_rbind[[k]], scientific = FALSE)
+}
+
+shap_plots_top <- ggarrange(plotlist = shap_plots[4:3], labels = names(shap_plots[4:3]),
+                        heights = c(7,6.5),
+                        nrow=2, align = "hv", common.legend = TRUE,
+                        font.label = list(size = 10, face = "plain", color ="black"),
+                        hjust = -0.5)
+
+shap_plots_bottom <- ggarrange(plotlist = shap_plots[2:1], labels = names(shap_plots[2:1]),
+                        heights = c(6.5,7),
+                        nrow=2, align = "hv", common.legend = TRUE,
+                        font.label = list(size = 10, face = "plain", color ="black"),
+                        hjust = -0.5,
+                        legend = "none")
+
+shap_plots_all <- ggarrange(shap_plots_top, shap_plots_bottom,
+                        heights = c(1.08,1),
+                        ncol=1, align = "hv", common.legend = TRUE)
+
+shap_plots_all
+```
+
+```{r save shap plot data, include=FALSE, message=FALSE, eval=FALSE, echo=FALSE}
+foo_ids <- c(rep(names(shap_plots[1]), nrow(shap_plots[[1]]$data)),
+             rep(names(shap_plots[2]), nrow(shap_plots[[2]]$data)),
+             rep(names(shap_plots[3]), nrow(shap_plots[[3]]$data)),
+             rep(names(shap_plots[4]), nrow(shap_plots[[4]]$data)))
+foo <- bind_rows(shap_plots[[1]]$data,
+          shap_plots[[2]]$data,
+          shap_plots[[3]]$data,
+          shap_plots[[4]]$data)
+foo$model <- foo_ids
+foo <- foo %>%
+  dplyr::select(model, everything())
+writexl::write_xlsx(foo, paste0(plot_dat_dir,"Fig 6E baseline placebo SHAP plot data.xlsx"))
+```
+
+```{r make plot figure 6E, fig.align='center', fig.height=6, fig.width=16}
+roc_plot_dat <- roc_dat[select_data[1:4,]$run] 
+roc_plots <- ggroc(roc_plot_dat, legacy.axes = TRUE, size = 1) +
+  theme_bw() +
+  scale_color_brewer("", palette = "Set1", type = "qual") +
+  scale_fill_brewer("", palette = "Set1", type = "qual") +
+  theme(legend.position = "none") +
+  geom_text(data = data.labels[1,], aes(1, 0.55, label = paste0(name, ", Brier=", brier, ", AUC=", auc)), hjust=1, show_guide=FALSE, size = 2.75) +
+  geom_text(data = data.labels[2,], aes(1, 0.40, label = paste0(name, ", Brier=", brier, ", AUC=", auc)), hjust=1, show_guide=FALSE, size = 2.75) +
+  geom_text(data = data.labels[3,], aes(1, 0.25, label = paste0(name, ", Brier=", brier, ", AUC=", auc)), hjust=1, show_guide=FALSE, size = 2.75) +
+  geom_text(data = data.labels[4,], aes(1, 0.1, label = paste0(name, ", Brier=", brier, ", AUC=", auc)), hjust=1, show_guide=FALSE, size = 2.75) +
+  theme(plot.margin = unit(c(0.1,3,0.1,3), "cm"))
+```
+
+```{r plot figure 6E, fig.align='center', fig.height=6, fig.width=16}
+figure_6E_plot <- ggarrange(ggarrange(NULL, feature_importance_plot, NULL, nrow = 3,
+                    heights = c(0.2,1,0.2)),
+          shap_plots_all,
+          ggarrange(roc_plots,
+                    my_placebo_confus_mat_plot_all,
+                    nrow=2,
+                    heights = c(0.6,1)),
+          widths = c(1.1,1.2,1),
+          nrow=1)
+figure_6E_plot
+```
+
+```{r save high dose xgb res and shap plots, include=FALSE, echo=FALSE, eval=FALSE}
+ggsave(filename = paste0(plotdir, "Figure 6E placebo baseline AUC Confusion Matrix Shap plots for top 4 models JCI revision across folds AverageRank.pdf"), plot=figure_6E_plot, height=6, width=16, device = "pdf")
+```
+
+### Examine top n models
+
+```{r examine top n models, fig.align='center', fig.width=13, fig.height=5, message=FALSE, warning=FALSE}
+shap_prep_rbind_df <- bind_rows(shap_prep_rbind, .id = "model")
+
+var_appearances <- shap_prep_rbind_df %>%
+  group_by(variable) %>%
+  mutate(n=n()/63) %>%
+  distinct(variable, n) %>%
+  arrange(desc(n))
+
+shap_by_feature_dat <-shap_prep_rbind_df %>%
+  left_join(., select_data %>%
+              rename(model = "run") %>%
+              dplyr::select(model, contains("rank")),
+            by = "model") %>%
+  left_join(., var_appearances,
+            by = "variable") %>%
+  mutate(model = fct_reorder(model, AverageRank)) %>%
+  mutate(variable = fct_reorder2(variable, mean_value, n))
+
+shap_by_feature <- shap_by_feature_dat %>%
+  ggplot(., aes(x = value, y = rfvalue)) +
+  geom_point(fill = "gray", pch = 21, alpha = 0.3) +
+  theme_bw() + 
+  ylab("feature value") +
+  xlab("SHAP value (impact on model output)") +
+  xlim(c(-2,2)) +
+  geom_smooth(method='lm', formula= y~x, color = "salmon", alpha = 0.30) +
+  stat_cor(method = "pearson", "cor.coef.name" = "R", size = 2.5, label.x.npc = "left", label.y.npc = "top",
+           aes(label = paste(..r.label.., cut(..p.., 
+                                          breaks = c(-Inf, 0.0001, 0.001, 0.01, 0.05, Inf),
+                                          labels = c("'****'", "'***'", "'**'", "'*'", "'ns'")),
+                         sep = "~"))) +
+  ggh4x::facet_grid2(model~variable, scales = "free_x", labeller = label_wrap_gen(), switch = "y") +
+  theme(strip.text.x.top = element_text(angle = 90, hjust = 0, vjust = 0.5),
+        strip.clip = "off",
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+  
+shap_by_feature
+```
+
+```{r save shap_by_feature, eval=FALSE, echo=FALSE, include=FALSE}
+pdf(paste0(plotdir, "Figure S5C placebo baseline feature values by SHAP values by variable by model AverageRank top ", top_n,".pdf"), width = 13, height = 5)
+shap_by_feature
+dev.off()
+```
+
+```{r xgb downselected features on full dataset, eval=FALSE, echo=FALSE, include=FALSE}
+### Run xgb on full data set using the downselected, cross-validated features
+#This can be used to create new models de novo for Shapley plots.
+source("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/kspzv1-systems-analysis/kspzv1 xgboost manual train and cv function.R")
+xgb_res <- c()
+set.seed(12345)
+for(k in select_data$run){
+  my_features <- fold4[[k]]$downselected_xgb_results$feature_names
+  xgb_res[[k]] <- xgb_train_on_selected_features(train_features = train_features,
+                                                 features_to_test = my_features,
+                                                 maxiterations = 2000)
+}
+#see vignettes in https://liuyanguu.github.io/post/2019/07/18/visualization-of-shap-for-xgboost/
+library(SHAPforxgboost)
+library(ggpubr)
+
+#note that 0=infected (not protected) and 1 = protected
+shap_plot <- c()
+for(k in rev(select_data$run)){
+  my_features <- xgb_res[[k]]$xgb_results$feature_names
+  shap_plot[[k]] <- shap.plot.summary.wrap1(xgb_res[[k]]$xgb_results,
+                                           X = as.matrix(train_features[, my_features]))
+}
+                                           
+shap_plots_top <- ggarrange(plotlist = shap_plot[4:3], labels = names(shap_plot[4:3]),
+                        heights = c(6,5.4),
+                        nrow=2, align = "hv", common.legend = TRUE,
+                        font.label = list(size = 10, face = "plain", color ="black"),
+                        hjust = -0.5)
+
+shap_plots_bottom <- ggarrange(plotlist = shap_plot[2:1], labels = names(shap_plot[2:1]),
+                        heights = c(6,6.5),
+                        nrow=2, align = "hv", common.legend = TRUE,
+                        font.label = list(size = 10, face = "plain", color ="black"),
+                        hjust = -0.5,
+                        legend = "none")
+
+shap_plots <- ggarrange(shap_plots_top, shap_plots_bottom,
+                        heights = c(1.1,1),
+                        ncol=1, align = "hv", common.legend = TRUE)
+
+shap_plots
+```
+
+```{r save xgb train results for shap plot, include=FALSE, echo=FALSE, eval=FALSE}
+my_number <- 1
+save(xgb_res, train_features, file = paste0(
+  "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/full_placebo_baseline_4fold_cv_2500_runs/",
+  "placebo_pfspz_baseline_top_4_models_by_AverageRank_xgb_res_for_shap_plots_v", my_number, ".RData"))
+```
+
+
+```{r save placebo xgb res and shap plots, include=FALSE, echo=FALSE, eval=FALSE}
+figure_5c_plot <- ggarrange(roc_plots, my_placebo_confus_mat_plot_all, shap_plots,
+          widths = c(1,0.75, 1.3), nrow=1)
+
+ggsave(filename = paste0(plotdir, "Figure 5C placebo AUC Confusion Matrix Shap plots for top 4 models JCI revision AverageRank v", my_number, ".pdf"), plot=figure_5c_plot, height=6, width=16, device = "pdf")
+```
+
+### Confirm differences in Vg9−Vd2+ cells between NP and P in placebo group at baseline
+
+```{r confirm differences in Vg9−Vd2++ cells, fig.align='center', fig.width=4, fig.height=3, message=FALSE, warning=FALSE}
+library(ggpubr)
+#load the baseline placebo data set
+#local filename: "placebo_PfSPZ_baseline_correlation_ML_data_with_missing.rds"
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1QW2oeHFScRKPxESukZvwlxD-zKF9kZvf"), path = temp, overwrite = TRUE)
+baseline_placebo_features <- readRDS(file = dl$local_path) %>%
+  rownames_to_column(var = "PATID") %>%
+  dplyr::select(PATID, contains("Vg9"))
+
+#local filename: "KSPZV1 PhenoData TTE 6 months Long Format.rds"
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1v2l7G7AzXhgcqObzAabYy6_QJsdB5hFn"), path = temp, overwrite = TRUE)
+pheno_data <- readRDS(file = dl$local_path) %>%
+  filter(Dosegroup == "Placebo") %>%
+  dplyr::select(PATID, tte.mal.atp.3, Outcome, Dosegroup) %>%
+  distinct(PATID, tte.mal.atp.3, Outcome, Dosegroup)
+
+facs_dat <- pheno_data %>%
+  left_join(., baseline_placebo_features, by = "PATID") %>%
+  drop_na("FACS_Vg9-Vd2+_of_T_cells") 
+
+facs_dat_n <- facs_dat %>% 
+  group_by(Outcome) %>%
+  mutate(n=n()) %>%
+  ungroup() %>%
+  mutate(outcome = ifelse(Outcome == "infected", paste0("NP (", n, ")"),
+                          paste0("P (", n, ")")))
+
+Vg9Vd2_plot <- facs_dat_n %>% 
+  ggplot(., aes(x = outcome, y = `FACS_Vg9-Vd2+_of_T_cells`, fill = outcome)) +
+  geom_boxplot() +
+  ggbeeswarm::geom_quasirandom(size = 2, width = 0.2) +
+  ylab("Vg9-Vd2+ (% of T cells)") +
+  xlab("outcome (n)") +
+  scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
+  stat_compare_means(method = "wilcox", vjust = 1, hjust = 0.5, label.x.npc = "right") +
+  theme_bw(base_family = "sans") +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 12, colour = "black"),
+        axis.title = element_text(size = 14))
+
+Vg9Vd2_plot
+```
+
+
+```{r save cd11c plot, eval=FALSE, include=FALSE, echo=FALSE}
+ggsave(filename = paste0(plotdir, "Figure SX Vg9-Vd2+ FACS NP vs P placebo baseline.pdf"),plot = Vg9Vd2_plot, device = "pdf",
+       units = "in", width = 4, height = 3)
+```
+
+```{r read in data scale and impute, eval=FALSE, echo=FALSE, include=FALSE}
+# Apply placebo model to highdose group
+highdose_features_class <- read_rds(file = paste0(datadir2, "high_dose_baseline_class_features_scaled_imputed.rds"))
+```
+
+```{r make highdose features, eval=FALSE, echo=FALSE, include=FALSE}
+set.seed(1234) #set seed for reproducibility
+test_features <- highdose_features_class %>%
+  dplyr::select(-c(sex, site))
+
+test_dat <- t(test_features) %>%
+  data.frame(check.names = FALSE) %>%
+  t() %>%
+  data.frame(check.names = FALSE) %>%
+  mutate(class = factor(class)) %>%
+  mutate_at(c(2:ncol(.)), as.numeric)
+
+setDT(test_dat, keep.rownames = TRUE)
+test_dat_samplenames <- test_dat$rn
+test_dat <- test_dat[,-1]
+
+if(all(colnames(test_dat) == colnames(test_features)) &
+   all(test_dat_samplenames == rownames(test_features))){
+  print("highdose (test) set good to go!")
+  } else {
+    print("please check to see if test samples and features match.")
+    }
+#check missing values
+#table(is.na(test_dat))
+#sapply(test_dat, function(x) sum(is.na(x))/length(x))*100
+#see https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/ for         more data cleaning options
+
+#assign data and labels using one hot encoding 
+test_labels <- test_dat$class #Levels: infected protected --> 1 2
+new_test <- model.matrix(~.+0, data = test_dat[,-c("class"), with=F])
+colnames(new_test) <- gsub("\\`","",colnames(new_test))
+#convert factor to numeric 
+test_labels <- as.numeric(test_labels)-1 #note that 0=infected (not protected) and 1 = protected using one hot encoding 
+#prepare matrix
+dtest <- xgb.DMatrix(data = new_test, label = test_labels)
+
+temp_df <- data.frame("class" = highdose_features_class$class, "labels" = test_labels)
+table(temp_df$class, temp_df$label) #confirmed that infected = 0, and protected = 1
+#here is tricky part. now we want to reverse the classes given that the "protected" group in placebo is hypothesized to resemble the "infected" or "not protected" group in the high-dose PfSPZ infants at baseline. (Remember that "infected/not protected" was originally labeled "0" in the high-dose group)
+temp_df <- temp_df %>%
+  mutate(dummy_label = ifelse(labels==0, 1, 0))
+highdose_dummy_label <- temp_df$dummy_label
+table("actual" = temp_df$class, "dummy" = temp_df$dummy_label)
+```
+
+```{r get performance metrics of top placebo models evaluated using high-dose PfSPZ as test, eval=FALSE, echo=FALSE, include=FALSE}
+## Predict high-dose PfSPZ group using best placebo model
+
+#Determine if the best placebo PfSPZ xgb model, can predict the opposite class in the placebo dataset
+
+select_data <- across_fold_perform_placebo_rank_by_AverageRank[1:4,]
+
+xgbDMat_test_highdose <- xgbpred_highdose_dichotomous <- xgbpred_highdose <- confusion_mat_highdose <- c()
+roc_dat_highdose <- auc_highdose <- logloss_highdose <- performance_highdose <- brier_highdose <- c()
+across_fold_performance_df <- auc_df_highdose <- logloss_df_highdose <- brier_df_highdose <- across_fold_perform_highdose <- c()
+folds_list <- list(fold1, fold2, fold3, fold4)
+names(folds_list) <- c("fold1", "fold2", "fold3", "fold4")
+ for(j in names(folds_list)){
+   for(k in select_data$run){
+     my_features <- folds_list[[j]][[k]]$downselected_xgb_results$feature_names
+     xgbDMat_test_highdose[[k]] <- xgb.DMatrix(data = new_test[,my_features],
+                                               label = highdose_dummy_label,
+                                               nthread = 8)
+     xgbpred_highdose[[k]] <- predict(folds_list[[j]][[k]]$downselected_xgb_results, xgbDMat_test_highdose[[k]])
+     xgbpred_highdose_dichotomous[[k]] <- ifelse(xgbpred_highdose[[k]] > 0.5,1,0)
+     xgbpred_highdose_dichotomous[[k]] <- factor(ifelse(xgbpred_highdose_dichotomous[[k]]==1, "protected", "not protected")) #remember that we are going with the original
+     #high-dose designation: infected=0, protected=1
+     test_labels_for_confusion_matrix <- factor(ifelse(test_labels==1, "protected", "not protected"))
+     confusion_mat_highdose[[k]] <- caret::confusionMatrix(xgbpred_highdose_dichotomous[[k]], test_labels_for_confusion_matrix)
+     brier_highdose[[k]] <- mlr::measureBrier(xgbpred_highdose[[k]], test_labels_for_confusion_matrix,
+                                              "infected", "protected")
+     logloss_highdose[[k]] <- MLmetrics::LogLoss(xgbpred_highdose[[k]], as.numeric(test_labels_for_confusion_matrix)-1)
+     performance_highdose[[k]] <- confusion_mat_highdose[[k]]$overall
+     roc_dat_highdose[[k]] <- pROC::roc(response = test_labels,
+                                        predictor = xgbpred_highdose[[k]],
+                                        smooth = smooth)
+     auc_highdose[[k]] <- roc_dat_highdose[[k]]$auc %>% as.numeric(.) %>% signif(.,digits=3)
+     }
+   across_fold_performance_df[[j]] <- bind_rows(performance_highdose, .id = "run") %>%
+      arrange(desc(Kappa))  %>%
+      mutate(Kappa_rank = 1:nrow(.)) %>%
+      arrange(desc(Accuracy)) %>%
+      mutate(Accuracy_rank = 1:nrow(.))
+    auc_df_highdose[[j]] <- bind_rows(auc_highdose, .id = "run") %>%
+      pivot_longer(., cols = everything(), names_to = "run", values_to = "AUC") %>%
+      arrange(desc(AUC))  %>%
+      mutate(AUC_rank = 1:nrow(.))
+    logloss_df_highdose[[j]] <- bind_rows(logloss_highdose, .id = "run") %>%
+      pivot_longer(., cols = everything(), names_to = "run", values_to = "LogLoss") %>%
+      arrange(LogLoss)  %>%
+      mutate(LogLoss_rank = 1:nrow(.))
+    brier_df_highdose[[j]] <- bind_rows(brier_highdose, .id = "run") %>%
+      pivot_longer(., cols = everything(), names_to = "run", values_to = "BrierScore") %>%
+      mutate(BrierScore = signif(BrierScore, 3)) %>%
+      arrange(BrierScore) %>%
+      mutate(BrierScore_rank = 1:nrow(.))
+   
+    across_fold_perform_highdose[[j]] <- auc_df_highdose[[j]] %>%
+      left_join(., across_fold_performance_df[[j]], by = "run") %>%
+      left_join(., select_data %>%
+                  dplyr::select(run, Features),
+                by = "run") %>%
+      left_join(., logloss_df_highdose[[j]],
+                by = "run") %>%
+      left_join(., brier_df_highdose[[j]],
+                by = "run") %>%
+      mutate(AverageRank = (Accuracy_rank + AUC_rank + BrierScore_rank + Kappa_rank + LogLoss_rank)/5) %>%
+      dplyr::select(run, Features, BrierScore_rank, Kappa_rank, LogLoss_rank, AUC_rank,
+                    AverageRank, Accuracy_rank, AUC, BrierScore, LogLoss, Kappa, Accuracy:McnemarPValue) %>%
+      group_by(run) %>%
+      slice_head(n=1) %>%
+      ungroup() %>%
+      arrange(BrierScore_rank)
+ }
+
+across_fold_perform_highdose_all_folds <- bind_rows(across_fold_perform_highdose, .id = "fold")
+```
+
+
+```{r xgb best performing placebo features on full highdose dataset, eval=FALSE, echo=FALSE, include=FALSE}
+## Train best performing placebo features on highdose data
+
+source("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/kspzv1-systems-analysis/kspzv1 xgboost manual train and cv function.R")
+
+select_placebo_models <- across_fold_perform_placebo_rank_by_AverageRank[1:4,]
+test_features <- highdose_features_class %>%
+  dplyr::select(-c(sex, site))
+xgb_highdose_res <- c()
+for(k in select_placebo_models$run){
+  my_features <- fold4[[k]]$downselected_xgb_results$feature_names
+  xgb_highdose_res[[k]] <- xgb_train_on_selected_features(train_features = test_features,
+                                                          features_to_test = my_features,
+                                                          maxiterations = 2000)
+}
+```
+
+```{r prepare shapley plots or highdose using placebo features, fig.align='center', fig.width=6, fig.height=5, eval=FALSE, echo=FALSE, include=FALSE}
+## Plot SHAP for highdose using placebo features
+
+#see vignettes in https://liuyanguu.github.io/post/2019/07/18/visualization-of-shap-for-xgboost/
+library(SHAPforxgboost)
+library(ggpubr)
+
+
+#note that 0=infected (not protected) and 1 = protected
+shap_highdose_plot <- shap_highdose_plot_dat <- c()
+for(k in select_placebo_models$run){
+  my_features <- xgb_highdose_res[[k]]$xgb_results$feature_names
+  shap_highdose_plot[[k]] <- shap.plot.summary.wrap1(xgb_highdose_res[[k]]$xgb_results,
+                                           X = as.matrix(train_features[, my_features]))
+  shap_highdose_plot_dat[[k]] <- shap_highdose_plot[[k]]$data
+  levels(shap_highdose_plot_dat[[k]]$variable) <- gsub("FACS_|_innate_BTM|_highBTM|_monaco|CytokineObsConc_", "", levels(shap_highdose_plot_dat[[k]]$variable))
+  levels(shap_highdose_plot_dat[[k]]$variable) <- gsub("PfSPZ", "Pf", levels(shap_highdose_plot_dat[[k]]$variable))
+  levels(shap_highdose_plot_dat[[k]]$variable) <- gsub("_of_live_leukocytes", "_of_live_PBMCs", levels(shap_highdose_plot_dat[[k]]$variable))
+  levels(shap_highdose_plot_dat[[k]]$variable) <- gsub("_", " ", levels(shap_highdose_plot_dat[[k]]$variable))
+}
+                                           
+shap_highdose_plots <- ggarrange(plotlist = shap_highdose_plot, labels = names(shap_highdose_plot),
+                                heights = c(1,0.9,0.9,1),
+                                nrow=4, align = "hv", common.legend = TRUE)
+```
+
+```{r plot shapley plots placebo, fig.align='center', fig.width=6, fig.height=8, eval=FALSE, echo=FALSE, include=FALSE}
+shap_placebo_plots
+```
+
+### Shap by Feature high dose
+
+```{r shap_by_feature highdose, fig.align='center', fig.width=16, fig.height=5, message=FALSE, warning=FALSE}
+shap_highdose_dat_rbind_df <- bind_rows(shap_highdose_plot_dat, .id = "model")
+
+var_appearances <- shap_highdose_dat_rbind_df %>%
+  group_by(variable) %>%
+  mutate(n=n()) %>%
+  distinct(variable, n)
+
+shap_by_feature_dat <- shap_highdose_dat_rbind_df %>%
+  left_join(., select_data %>%
+              rename(model = "run") %>%
+              dplyr::select(model, contains("rank")),
+            by = "model") %>%
+  left_join(., var_appearances,
+            by = "variable") %>%
+  mutate(model = fct_reorder(model, AverageRank)) %>%
+  mutate(variable = fct_reorder2(variable, mean_value, n))
+
+shap_by_feature <- shap_by_feature_dat %>%
+  ggplot(., aes(x = value, y = rfvalue)) +
+  geom_point(fill = "gray", pch = 21, alpha = 0.3) +
+  theme_bw() + 
+  ylab("feature value") +
+  xlab("SHAP value (impact on model output)") +
+  xlim(c(-2,2)) +
+  geom_smooth(method='lm', formula= y~x, color = "salmon", alpha = 0.30) +
+  stat_cor(method = "pearson", "cor.coef.name" = "R", size = 2.5, label.x.npc = "left", label.y.npc = "top",
+           aes(label = paste(..r.label.., cut(..p.., 
+                                          breaks = c(-Inf, 0.0001, 0.001, 0.01, 0.05, Inf),
+                                          labels = c("'****'", "'***'", "'**'", "'*'", "'ns'")),
+                         sep = "~"))) +
+  ggh4x::facet_grid2(model~variable, scales = "free_x", labeller = label_wrap_gen(), switch = "y") +
+  theme(strip.text.x.top = element_text(angle = 90, hjust = 0, vjust = 0.5),
+        strip.clip = "off",
+        axis.text = element_blank(),
+        axis.ticks = element_blank())
+  
+shap_by_feature
+```
