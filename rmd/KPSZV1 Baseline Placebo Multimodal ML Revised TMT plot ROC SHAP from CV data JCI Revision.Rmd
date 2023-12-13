@@ -32,6 +32,7 @@ library(caret)
 library(doMC)
 library(data.table)
 library(xgboost)
+library(SHAPforxgboost)
 library(mlr)
 library(ggpubr)
 library(tictoc)
@@ -587,10 +588,8 @@ for(k in select_data$run){
                                                  maxiterations = 2000)
 }
 #see vignettes in https://liuyanguu.github.io/post/2019/07/18/visualization-of-shap-for-xgboost/
-library(SHAPforxgboost)
-library(ggpubr)
-
 #note that 0=infected (not protected) and 1 = protected
+
 shap_plot <- c()
 for(k in rev(select_data$run)){
   my_features <- xgb_res[[k]]$xgb_results$feature_names
@@ -636,7 +635,6 @@ ggsave(filename = paste0(plotdir, "Figure 5C placebo AUC Confusion Matrix Shap p
 ### Confirm differences in Vg9−Vd2+ cells between NP and P in placebo group at baseline
 
 ```{r confirm differences in Vg9−Vd2++ cells, fig.align='center', fig.width=4, fig.height=3, message=FALSE, warning=FALSE}
-library(ggpubr)
 #load the baseline placebo data set
 #local filename: "placebo_PfSPZ_baseline_correlation_ML_data_with_missing.rds"
 temp <- tempfile(fileext = ".rds")
@@ -833,11 +831,8 @@ for(k in select_placebo_models$run){
 ## Plot SHAP for highdose using placebo features
 
 #see vignettes in https://liuyanguu.github.io/post/2019/07/18/visualization-of-shap-for-xgboost/
-library(SHAPforxgboost)
-library(ggpubr)
-
-
 #note that 0=infected (not protected) and 1 = protected
+
 shap_highdose_plot <- shap_highdose_plot_dat <- c()
 for(k in select_placebo_models$run){
   my_features <- xgb_highdose_res[[k]]$xgb_results$feature_names
@@ -859,9 +854,8 @@ shap_highdose_plots <- ggarrange(plotlist = shap_highdose_plot, labels = names(s
 shap_placebo_plots
 ```
 
+```{r shap_by_feature highdose, fig.align='center', fig.width=16, fig.height=5, eval=FALSE, echo=FALSE, include=FALSE}
 ### Shap by Feature high dose
-
-```{r shap_by_feature highdose, fig.align='center', fig.width=16, fig.height=5, message=FALSE, warning=FALSE}
 shap_highdose_dat_rbind_df <- bind_rows(shap_highdose_plot_dat, .id = "model")
 
 var_appearances <- shap_highdose_dat_rbind_df %>%

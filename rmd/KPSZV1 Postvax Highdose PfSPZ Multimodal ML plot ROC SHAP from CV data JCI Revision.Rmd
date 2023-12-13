@@ -32,6 +32,7 @@ library(caret)
 library(doMC)
 library(data.table)
 library(xgboost)
+library(SHAPforxgboost)
 library(mlr)
 library(ggpubr)
 library(tictoc)
@@ -561,7 +562,7 @@ shap_by_feature
 dev.off()
 ```
 
-```{r xgb downselected features on full dataset, eval=FALSE, echo=FALSE, include=FALSE}
+```{r xgb downselected features on full dataset}
 ### Run xgb on full data set using the downselected, cross-validated features
 #This can be used to create new models de novo for Shapley plots.
 source("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/kspzv1-systems-analysis/kspzv1 xgboost manual train and cv function.R")
@@ -575,10 +576,8 @@ for(k in select_data$run){
 }
 
 #see vignettes in https://liuyanguu.github.io/post/2019/07/18/visualization-of-shap-for-xgboost/
-library(SHAPforxgboost)
-library(ggpubr)
-
 #note that 0=infected (not protected) and 1 = protected
+
 shap_plot <- c()
 for(k in rev(select_data$run)){
   my_features <- xgb_res[[k]]$xgb_results$feature_names
