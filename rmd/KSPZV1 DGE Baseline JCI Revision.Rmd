@@ -1,8 +1,10 @@
 ---
 title: "KSPZV1 DGE pre-immunization baseline, JCI Revision"
 author: "Tuan M. Tran"
-date: "11/25/2023"
-output: html_document
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document :
+    theme: cerulean
 ---
 
 ```{r libraries, message=FALSE, warning=FALSE}
