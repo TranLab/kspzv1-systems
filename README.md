@@ -3,13 +3,13 @@ Code for systems analysis of KSPZV1 malaria vaccine trial.
 
 ## Unsupervised clustering heatmaps
 
-[Figure 1B. Complex heatmap and downstream clustering analyses, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-Complex-Heatmaps-Baseline-JCI-Revision.html)
+[Figures 1B. S2 Complex heatmap and downstream clustering analyses, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-Complex-Heatmaps-Baseline-JCI-Revision.html)
 
 ## Differential gene expression and enrichment analysis
 
-[Figures 2D, S3B, DGE and GSEA between protected and not protected by treatment group, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-DGE-Baseline-Revision.html)
+[Figures 2D, S3B, DGE and GSEA between protected and not protected by treatment group, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-DGE-Baseline-JCI-Revision.html)
 
-[IPA Upstream Regulator between protected and not protected by treatment group, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-DGE-Baseline-Revision-IPA-Plots.html)
+[Figure 2E, IPA Upstream Regulator between protected and not protected by treatment group, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-DGE-Baseline-Revision-IPA-Plots.html)
 
 [DGE and GSEA within and between Δ protected and Δ not protected for 1.8x10^6 PfSPZ group (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-DGE-Delta-Postvax-High-Dose-PfSPZ-limma-voom-Revision.html)
 

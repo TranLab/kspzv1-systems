@@ -1,8 +1,10 @@
 ---
 title: "KSPZV1 edgeR DGE CSP-specific IgG Response, pre-immunization baseline transcriptomes - revised"
 author: "Tuan M. Tran"
-date: "09/25/2023"
-output: html_document
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document :
+    theme: cerulean
 ---
 
 ```{r libraries, message=FALSE, warning=FALSE}
@@ -37,7 +39,7 @@ x <- readRDS(file = dl$local_path)
 x$treat <- factor(x$treat, levels = c("Placebo", "4.5 x 10^5 PfSPZ", "9.0 x 10^5 PfSPZ", "1.8 x 10^6 PfSPZ"))
 ```
 
-### CSP IgG reactivity at baseline and post-vax by treatment and outcome (Fig 3D of pre-print)
+### CSP IgG reactivity at baseline and post-vax by treatment and outcome (Fig 3D)
 
 ```{r, simple plots of CSPAb data, echo=TRUE, warning=FALSE, message=FALSE}
 set.seed(23)
@@ -90,6 +92,13 @@ cairo_pdf(filename = "/Volumes/GoogleDrive/My Drive/Manuscripts/KSPZV1 Manuscrip
           width = 4.5, height = 6.5)
 print(myPlot)
 dev.off()
+```
+
+```{r save Figure 3D data, include=FALSE, echo=FALSE, eval=FALSE}
+plotDat %>%
+  dplyr::select(variable, treat, Outcome, value) %>%
+  writexl::write_xlsx(.,
+                      path = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 3D Violin Plot Data for CSP-specific IgG response.xlsx")
 ```
 
 ### Rationale for choosing cut-off for binary response
@@ -173,9 +182,12 @@ for(i in names(ygroup)){
 temp <- degtab
 for(i in names(degtab)){
   temp[[i]] <- degtab[[i]]$table %>%
-    dplyr::select(7,8,10:14) %>%
-    head(.,15)
+    dplyr::select(7,9,8,10:14)
   }
+```
+
+```{r save degtab to file, include=FALSE, eval=FALSE, echo=FALSE}
+writexl::write_xlsx(temp, path = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Supplementary Tables JCI resubmission/Table S2 Baseline DGE CSP-specific IgG High vs Low Responders KSPZV1.xlsx")
 ```
 
 ### Examine top 15 DEGs (high CSP response vs low CSP response)
@@ -183,6 +195,13 @@ for(i in names(degtab)){
 4.5 x 10^5 PfSPZ 
 
 ```{r DEG table low dose, echo = FALSE}
+temp <- degtab
+for(i in names(degtab)){
+  temp[[i]] <- degtab[[i]]$table %>%
+    dplyr::select(7,8,10:14) %>%
+    head(.,15)
+}
+
 knitr::kable(temp$`4.5 x 10^5 PfSPZ`)
 ```
 
@@ -276,7 +295,7 @@ myPlot <- plotDat %>%
   ggplot(., aes(x = dosegroup, y = factor(pathway, 
        levels = rev(levels(factor(pathway)))))) +
   geom_point(aes(size=neglogpadj, fill = NES), alpha = 0.65, shape=21, stroke = 0.25) +
-  scale_size_area(name = expression(-log[10]~adj.~p~value), max_size = bubble_max_size) +
+  scale_size_area(name = expression(-log[10]~adj.~p~value), max_size = bubble_max_size, breaks = c(1.3, 5, 10, 20, 40, 80), limits = c(1,90)) +
       scale_fill_gradient2(low = "blue",
                            mid = "white",
                            high = "red") +
@@ -298,7 +317,7 @@ GSEA using genes ranked by direction and significance of differential gene expre
 Red: enriched in protected/uninfected through 3 months post-vax surveillance
 Blue: enriched in not protected/infected through 3 months post-vax surveillance
 
-```{r plot gsea bubbleplot, fig.align='center', fig.width=4.5, fig.height=6, echo=TRUE, message=FALSE, warning=FALSE}
+```{r plot gsea bubbleplot, fig.align='center', fig.width=4.25, fig.height=6, echo=TRUE, message=FALSE, warning=FALSE}
 addSmallLegend <- function(myPlot, pointSize = 4, textSize = 6, spaceLegend = 0.6) {
     myPlot +
         guides(shape = guide_legend(override.aes = list(size = pointSize)),
@@ -310,70 +329,14 @@ addSmallLegend <- function(myPlot, pointSize = 4, textSize = 6, spaceLegend = 0.
 print(addSmallLegend(myPlot))
 ```
 
-### Determine relationship of baseline MBC and plasmablast modules with baseline CSP-specific IgG
-
-```{r readin data for MES and CSP Igg}
-library(googledrive)
-library(tidyverse)
-#load the baseline expression dataset
-temp <- tempfile(fileext = ".rds")
-dl <- drive_download(
-  as_id("1togaBlNIxiDj16FyXTC-r7Qw0A9cG2az"), path = temp, overwrite = TRUE)
-baseline_eset <- readRDS(file = dl$local_path)
-baseline_eset <- baseline_eset[,baseline_eset$treat== "1.8 x 10^6 PfSPZ"]
-
-source("https://raw.githubusercontent.com/TranLab/ModuleLists/main/Gene2ModuleExpressionScores.R")
-
-summary_stat <- median
-
-#baseline
-baseline_pas_hibtm <- Gene2ModuleExpressionScores(baseline_eset, module_list = "highBTMs", summary_stat = summary_stat)
-rownames(baseline_pas_hibtm) <- paste(rownames(baseline_pas_hibtm), "highBTM_baseline")
-rownames(baseline_pas_hibtm) <- gsub(" ", "_", rownames(baseline_pas_hibtm))
-
-baseline_pas_monaco <- Gene2ModuleExpressionScores(baseline_eset, module_list = "MonacoModules", summary_stat = summary_stat)
-rownames(baseline_pas_monaco) <- paste(rownames(baseline_pas_monaco), "monaco_baseline")
-rownames(baseline_pas_monaco) <- gsub(" ", "_", rownames(baseline_pas_monaco))
-
-IgG_dat <- pData(x) %>%
-  filter(treat == "1.8 x 10^6 PfSPZ") %>%
-  dplyr::select(SAMPLEID, CSPAb, log2FC_CSPAb, treat) %>%
-  full_join(., baseline_pas_monaco %>%
-              t() %>%
-              data.frame() %>%
-              rownames_to_column(var = "SAMPLEID"),
-            by = "SAMPLEID")
-  
+```{r save Figure 3E bubble plot data, include=FALSE, eval=FALSE, echo=FALSE}
+writexl::write_xlsx(myPlot$data, path = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 3E GSEA CSP-specific High vs Low Responder Bubble Plot Data.xlsx")
 ```
 
-```{r scatter plots}
-PB_base <- IgG_dat %>%
-  ggplot(., aes(x = Plasmablasts_monaco_baseline, y = log10(CSPAb+1))) +
-  geom_point() +
-  stat_cor() + 
-  stat_smooth(method = "lm") +
-  theme_bw()
 
-MBC_base <- IgG_dat %>%
-  ggplot(., aes(x = B_Memory_monaco_baseline, y = log10(CSPAb+1))) +
-  geom_point() +
-  stat_cor() + 
-  stat_smooth(method = "lm") +
-  theme_bw()
-
-PB_LFC <- IgG_dat %>%
-  ggplot(., aes(x = Plasmablasts_monaco_baseline, y = log2FC_CSPAb)) +
-  geom_point() +
-  stat_cor() + 
-  stat_smooth(method = "lm") +
-  theme_bw()
-
-MBC_LFC <- IgG_dat %>%
-  ggplot(., aes(x = B_Memory_monaco_baseline, y = log2FC_CSPAb)) +
-  geom_point() +
-  stat_cor() + 
-  stat_smooth(method = "lm") +
-  theme_bw()
-
-ggarrange(PB_base,MBC_base, PB_LFC, MBC_LFC, ncol = 2)
+```{r save gsea bubbleplot, include=FALSE, echo=FALSE, eval=FALSE}
+figdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Figure Panels/"
+pdf(file = paste0(figdir, "Figure 3E CSP Ab Hi vs Low GSEA bubbleplot.pdf"), width = 4.25, height = 6)
+print(addSmallLegend(myPlot))
+dev.off()
 ```
