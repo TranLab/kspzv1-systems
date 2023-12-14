@@ -1,8 +1,10 @@
 ---
 title: "KSPZV1 Complex Heatmaps Δ (postvax/baseline), JCI Revision"
 author: "Tuan M. Tran"
-date: "09/05/2023"
-output: html_document
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document :
+    theme: cerulean
 ---
 
 ```{r setup, include=FALSE}
@@ -23,7 +25,7 @@ This script reproduces Figures 4B, S5A, 4D in the revised manuscript. It include
 
 1. Add study site (Wagai vs Siaya) to column annotations
 
-For revision, address Reviewer's concerns that generation of clusters in heatmap is random by generating heatmap using random seed to show that the clustering is deterministic in our case.
+For revision, address Reviewer's concerns that generation of clusters in heatmap is random by generating heatmap using random seed to show that the clustering is deterministic. (Note for the delta heatmap, Ward D2, a hierarchical agglomerative method, was used.)
 
 ```{r load libraries, include = TRUE, message=FALSE, warning=FALSE}
 library(ComplexHeatmap)
@@ -179,19 +181,19 @@ if(myTimepoint == "delta"){
 }
 ```
 
+```{r optimal clusters Elbow, echo=FALSE, eval=FALSE,message=FALSE, warning=FALSE, include=FALSE, eval=FALSE, echo=FALSE}
 ## Determining optimal number of clusters using fviz_nbclust function
+# 
+# https://www.datanovia.com/en/lessons/determining-the-optimal-number-of-clusters-3-must-know-methods/
+# 
+# https://uc-r.github.io/kmeans_clustering#optimal
+# 
+# To perform a cluster analysis in R, generally, the data should be prepared as follows:
+# 
+# Rows are observations (individuals) and columns are variables
+# Any missing value in the data must be removed or estimated.
+# The data must be standardized (i.e., scaled) to make variables comparable. Recall that, standardization consists of transforming the variables such that they have mean zero and standard deviation one.1
 
-https://www.datanovia.com/en/lessons/determining-the-optimal-number-of-clusters-3-must-know-methods/
-
-https://uc-r.github.io/kmeans_clustering#optimal
-
-To perform a cluster analysis in R, generally, the data should be prepared as follows:
-
-Rows are observations (individuals) and columns are variables
-Any missing value in the data must be removed or estimated.
-The data must be standardized (i.e., scaled) to make variables comparable. Recall that, standardization consists of transforming the variables such that they have mean zero and standard deviation one.1
-
-```{r optimal clusters Elbow, echo=FALSE, eval=FALSE,message=FALSE, warning=FALSE}
 library(factoextra)
 # Elbow method
 fviz_nbclust(t(exprs(x)), cluster::pam, method = "wss") +
@@ -252,9 +254,9 @@ hm <- Heatmap(exprs(x),
               )
 ```
 
-## Print heatmap (Figure 4B in pre-print)
+## Print heatmap (Figure 4A) and extract cluster information
 
-```{r save heatmap, fig.width= 10, fig.height=7, fig.align="center", eval=FALSE}
+```{r save heatmap, fig.width= 10, fig.height=7, fig.align="center", eval=FALSE, include=FALSE, echo=FALSE}
 #set dimensions
 # myheight <- 10
 # mywidth <- 20
@@ -262,8 +264,6 @@ hm <- Heatmap(exprs(x),
 # print(hm)
 # dev.off()
 ```
-
-## Extract clustering information
 
 see https://github.com/jokergoo/ComplexHeatmap/issues/136
 
@@ -445,11 +445,11 @@ Outcome.counts <- pData.cluster %>%
     mapping = aes(x = x, y = y, label = label))
 
 #Days to first parasitemia
-TTE.boxplot <- pData.cluster %>%
+TTE.boxplot.dat <- pData.cluster %>%
   mutate(Outcome = factor(mal.atp.3, levels = c(1,0), labels = c("not protected (infected)", "protected (uninfected)"))) %>%
   dplyr::filter(!(is.na(tte.mal.atp.6) | is.na(Outcome)))
 
-TTE.boxplot %>% 
+TTE.boxplot.stats <-  TTE.boxplot.dat %>% 
   filter(!(treat == "4.5 x 10^5 PfSPZ" & Cluster == "SC2")) %>%
   group_by(treat, Cluster) %>%
   do(w = wilcox.test(tte.mal.atp.6~Outcome, data=., paired=FALSE, exact = FALSE)) %>%
@@ -457,7 +457,7 @@ TTE.boxplot %>%
   mutate(padj = p.adjust(Wilcox_pval, method= "BH")) %>%
   mutate_if(is.numeric, signif, 2)
 
-TTE.boxplot %>%
+TTE.boxplot <- TTE.boxplot.dat %>%
   ggplot(., aes(Cluster, tte.mal.atp.6, fill = Outcome, color = Outcome)) +
   geom_point(position = position_jitterdodge()) +
   geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA) +
@@ -477,11 +477,11 @@ TTE.boxplot %>%
         )
 
 #CSP-specific IgG at pre-vax
-CSPbl.boxplot <- pData.cluster %>%
+CSPbl.boxplot.dat <- pData.cluster %>%
   mutate(Outcome = factor(mal.atp.3, levels = c(1,0), labels = c("not protected (infected)", "protected (uninfected)"))) %>%
   dplyr::filter(!(is.na(pfcsp_pre) | is.na(Outcome)))
 
-CSPbl.boxplot %>% 
+CSPbl.boxplot.stats <- CSPbl.boxplot.dat %>% 
   filter(!(treat == "4.5 x 10^5 PfSPZ" & Cluster == "SC2")) %>%
   group_by(treat, Cluster) %>%
   do(w = wilcox.test(pfcsp_pre~Outcome, data=., paired=FALSE, exact = FALSE)) %>%
@@ -489,7 +489,7 @@ CSPbl.boxplot %>%
   mutate(padj = p.adjust(Wilcox_pval, method= "BH")) %>%
   mutate_if(is.numeric, signif, 2)
 
-CSPbl.boxplot %>% 
+CSPbl.boxplot <- CSPbl.boxplot.dat %>% 
   ggplot(., aes(Cluster, log10(pfcsp_pre+1), fill = Outcome, color = Outcome)) +
   geom_point(position = position_jitterdodge()) +
   geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA) +
@@ -509,11 +509,11 @@ CSPbl.boxplot %>%
         )
 
 #CSP-specific IgG log2FC
-CSPlogfc.boxplot <- pData.cluster %>%
+CSPlogfc.boxplot.dat <- pData.cluster %>%
   mutate(Outcome = factor(mal.atp.3, levels = c(1,0), labels = c("not protected (infected)", "protected (uninfected)"))) %>%
   dplyr::filter(!(is.na(log2FC_CSPAb) | is.na(Outcome)))
                 
-CSPlogfc.boxplot %>% 
+CSPlogfc.boxplot.stats <-  CSPlogfc.boxplot.dat %>% 
   filter(!(treat == "4.5 x 10^5 PfSPZ" & Cluster == "SC2")) %>%
   group_by(treat, Cluster) %>%
   do(w = wilcox.test(log2FC_CSPAb~Outcome, data=., paired=FALSE, exact = FALSE)) %>%
@@ -521,7 +521,7 @@ CSPlogfc.boxplot %>%
   mutate(padj = p.adjust(Wilcox_pval, method= "BH")) %>%
   mutate_if(is.numeric, signif, 2)
                 
-CSPlogfc.boxplot %>% 
+CSPlogfc.boxplot <- CSPlogfc.boxplot.dat %>% 
   ggplot(., aes(x = Cluster, y = log2FC_CSPAb, fill = Outcome, color = Outcome)) +
   geom_point(position = position_jitterdodge()) +
   geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA) +
@@ -583,10 +583,10 @@ Pf.counts <-  pData.cluster %>%
   geom_text(data = dat_text,mapping = aes(x = x, y = y, label = label))
 
 #Pf episodes during vax period
-mal.dvax.tot.boxplot <- pData.cluster %>%
+mal.dvax.tot.boxplot.dat <- pData.cluster %>%
   mutate(Outcome = factor(mal.atp.3, levels = c(1,0), labels = c("not protected (infected)", "protected (uninfected)")))
 
-mal.dvax.tot.boxplot %>% 
+mal.dvax.tot.boxplot.stats <- mal.dvax.tot.boxplot.dat %>% 
   filter(!(treat == "4.5 x 10^5 PfSPZ" & Cluster == "SC2")) %>%
   group_by(treat, Cluster) %>%
   do(w = wilcox.test(mal.dvax.tot~Outcome, data=., paired=FALSE, exact = FALSE)) %>%
@@ -594,7 +594,7 @@ mal.dvax.tot.boxplot %>%
   mutate(padj = p.adjust(Wilcox_pval, method= "BH")) %>%
   mutate_if(is.numeric, signif, 2)
 
-mal.dvax.tot.boxplot %>%
+mal.dvax.tot.boxplot <- mal.dvax.tot.boxplot.dat %>%
   ggplot(., aes(Cluster, mal.dvax.tot, fill = Outcome, color = Outcome)) +
   geom_point(position = position_jitterdodge()) +
   geom_boxplot(alpha = 0.4, color = "grey30", outlier.shape = NA) +
@@ -636,14 +636,14 @@ dat_text <- data.frame(treat = factor(levels(pData.cluster$treat), levels = leve
                            x = 1.5, y = 25,
                            Site = c("Siaya","Wagai"))      
 
-  Site.counts <- pData.cluster %>%
-    dplyr::filter(!(is.na(Cluster) | is.na(Site))) %>% 
-    ggplot(., aes(x= Cluster, fill = Site)) +
-    geom_bar(position = "dodge") +
-    scale_fill_manual(values = c("#33A02C","#B2DF8A")) +
-    ylab("Site (counts)") +
-    facet_wrap(~treat, ncol = 4) +
-    theme_classic(base_family = basefont, base_size = basefontsize) +
+Site.counts <- pData.cluster %>%
+  dplyr::filter(!(is.na(Cluster) | is.na(Site))) %>% 
+  ggplot(., aes(x= Cluster, fill = Site)) +
+  geom_bar(position = "dodge") +
+  scale_fill_manual(values = c("#33A02C","#B2DF8A")) +
+  ylab("Site (counts)") +
+  facet_wrap(~treat, ncol = 4) +
+  theme_classic(base_family = basefont, base_size = basefontsize) +
   theme(axis.ticks.x=element_blank(),
         axis.title.x=element_blank(),
         strip.text.x = element_blank(),
@@ -653,7 +653,9 @@ dat_text <- data.frame(treat = factor(levels(pData.cluster$treat), levels = leve
   geom_text(data = dat_text,mapping = aes(x = x, y = y, label = label, size = basefontsize))
 ```
 
-## Print column annotation bar and box plots (Figure S2 in pre-print)
+## Print column annotation bar and box plots (Figure S5)
+
+Note that the boxplots here show unadjusted p values, whereas the count plots show adjusted p values. Figure S5 in the manuscript shows BH-adjusted p values for all. BH-adjusted p values for the boxplots can be accessed from the objects with the ".stats" suffix.
 
 ```{r plot plots based on clusters, message=FALSE, warning=FALSE, fig.width=14, fig.height=12, fig.align='center'}
 print(ggarrange(
@@ -718,7 +720,7 @@ Outcome.counts <- sc2_subset  %>%
   scale_fill_manual(values = c("#A6CEE3", "#1F78B4")) +
   ylab("Outcome (count)") +
   theme_classic(base_family = "Arial", base_size = 10) +
-  theme(axis.text.x=element_text(angle = 45, vjust = -1, hjust = 0),
+  theme(#axis.text.x=element_text(angle = 45, vjust = -1, hjust = 0),
         axis.ticks.x=element_blank(),
         axis.title.x=element_blank(),
         strip.background = element_rect(fill="white"),
@@ -728,16 +730,19 @@ Outcome.counts <- sc2_subset  %>%
     mapping = aes(x = x, y = y, label = label))
 ```
 
+```{r plot outcome counts sc2, fig.align='center',fig.height=4, fig.width=4}
+Outcome.counts
+```
 
-```{r save make sc2 specific barplot}
+
+```{r save make sc2 specific barplot, eval=FALSE, echo=FALSE, include = FALSE}
 # cairo_pdf(filename = paste0(figdir, "Fig S5B SC2 sub Revision.pdf"), height = 1.25, width = 1)
 # Outcome.counts
 # dev.off()
 ```
 
+```{r extract clustering information rows, message=FALSE, warning=FALSE, include=FALSE, echo=FALSE, eval=FALSE}
 ### Extract clustering information for rows (genes)
-
-```{r extract clustering information rows, message=FALSE, warning=FALSE}
 r.dend <- row_dend(hm)  #Extract col dendrogram
 rcl.list <- row_order(hm)  #Extract clusters (output is a list)
 lapply(rcl.list, function(x) length(x))  #check/confirm size clusters
@@ -757,9 +762,8 @@ for (i in 1:length(row_order(hm))){
   }
 ```
 
+```{r merge with fData,message=FALSE, warning=FALSE, include=FALSE, echo=FALSE, eval=FALSE}
 ### Merge with fData(x)
-
-```{r merge with fData,message=FALSE, warning=FALSE}
 if(myGroup == "allGroups"){
   if(myTimepoint == "delta"){
     if(noRowClust == 5){
@@ -816,13 +820,13 @@ if(myGroup == "allGroups"){
 }
 ```
 
-```{r figure 4C preprint, echo=FALSE}
+```{r figure 4C preprint, echo=FALSE, include=FALSE, echo=FALSE, eval=FALSE}
 knitr::kable(foo)
 ```
 
+```{r apply fgsea, message=FALSE, warning=FALSE, fig.width = 12, fig.heigth = 12, include=FALSE, echo=FALSE, eval=FALSE}
 ## Apply GSEA to Genes within Cluster ranked by mean variance across all samples 
 
-```{r apply fgsea, message=FALSE, warning=FALSE, fig.width = 12, fig.heigth = 12}
 set.seed(23)
 ranks <- deframe(cl24.ranklist)
 devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/NamedGeneRankList2GseaTable.R?raw=TRUE")
@@ -830,12 +834,12 @@ GSEA_delta_bound_df <- NamedGeneRankList2GseaTable(rankedgenes = ranks, geneset 
 "_GeneCluster4_minSize5"), scoreType = "pos", minSize = 5, fixed_seed = TRUE)
 ```
 
+```{r GSEA plot for baseline CPM Figure Panel D, message=FALSE, warning=FALSE, include=FALSE, echo=FALSE, eval=FALSE}
 ### Make GSEA plot for Figure 4D of pre-print
 
-GSEA of genes within the most variable cluster GC4 ranked by mean variance across all samples (minimum
-gene set size = 5, only modules with BH-adjusted p<0.20 shown)
+#GSEA of genes within the most variable cluster GC4 ranked by mean variance across all samples (minimum
+#gene set size = 5, only modules with BH-adjusted p<0.20 shown)
 
-```{r GSEA plot for baseline CPM Figure Panel D, message=FALSE, warning=FALSE}
 myGSEAClusterPlotDat <- readxl::read_excel(paste0(tempdir(),
                                                   "PfSPZ_GSEA_", myTimepoint,"_GeneCluster4_minSize5",
                                                   " GSEA results bloodmodules.xlsx")) %>%
@@ -863,7 +867,7 @@ myGSEAClusterPlot <- myGSEAClusterPlotDat %>%
   coord_flip()
 ```
 
-```{r plot GSEA enrichment delta, message=FALSE, warning=FALSE, fig.width=5, fig.height=5, fig.align='center'}
+```{r plot GSEA enrichment delta, message=FALSE, warning=FALSE, fig.width=5, fig.height=5, fig.align='center', include=FALSE, echo=FALSE, eval=FALSE}
 addSmallLegend <- function(myPlot, pointSize = 4, textSize = 6, spaceLegend = 1) {
     myPlot +
         guides(shape = guide_legend(override.aes = list(size = pointSize)),
