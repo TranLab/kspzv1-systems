@@ -1,8 +1,10 @@
 ---
 title: "KSPZV1 WGCNA baseline"
 author: "Tuan M. Tran"
-date: "09/24/2023"
-output: html_document
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document :
+    theme: cerulean
 ---
 
 ### Objective
