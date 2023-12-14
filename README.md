@@ -7,7 +7,7 @@ Code for systems analysis of KSPZV1 malaria vaccine trial.
 
 ## Differential gene expression and enrichment analysis
 
-[Figures 2D, S3B, DGE and GSEA between protected and not protected by treatment group, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-DGE-Baseline-Revision.html)
+[Figures 2D, S3B, DGE and GSEA between protected and not protected by treatment group, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-DGE-Baseline-JCI-Revision.html)
 
 [IPA Upstream Regulator between protected and not protected by treatment group, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-DGE-Baseline-Revision-IPA-Plots.html)
 
