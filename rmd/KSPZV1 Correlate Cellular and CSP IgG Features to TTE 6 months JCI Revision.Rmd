@@ -1,8 +1,10 @@
 ---
 title: "KSPZV1 Correlate Cellular and CSP IgG Features to Time to Parasitemia through 6 months - revised"
 author: "Tuan M. Tran"
-date: "09/25/2023"
-output: html_document
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document :
+    theme: cerulean
 ---
 
 ```{r libraries, message=FALSE, warning=FALSE}
@@ -54,7 +56,7 @@ Hmisc::rcorr(foo$tte.mal.atp.6, foo$`CSP-specific of B cells`, type = "spearman"
 Hmisc::rcorr(foo$tte.mal.atp.6, foo$`CSP-specific of memory B cells`, type = "spearman")
 ```
 
-```{r readin all_data_btm_for_tte6_correlations}
+```{r readin all_data_btm_for_tte6_correlations, message=FALSE, warning=FALSE}
 #from google drive
 temp <- tempfile(fileext = ".rds")
 dl <- drive_download(
@@ -126,7 +128,7 @@ corr_plot_dat <- summarized_correlations %>%
   mutate(timepoint2 = factor(timepoint2, levels = c("baseline", "2 weeks post-vax", "log2 fold-change","not significant"), labels = c("baseline","2 weeks post-vax","log2 fold-change", "not significant"))) 
 ```
 
-### CSP IgG reactivity at baseline and post-vax by treatment and outcome (Fig 3D of revised manuscript)
+### Correlation between CSP IgG reactivity and flow cytometry features with time-to-first parasitemia up to 6 months (Fig 3A of revised manuscript)
 
 ```{r, volcano plot, echo=TRUE, warning=FALSE, message=FALSE}
 cols <- c("baseline" = "blue", "2 weeks post-vax" = "red", "log2 fold-change" = "orange")
@@ -147,6 +149,10 @@ myPlot <- ggplot(corr_plot_dat, aes(x = spearman_r, y = neglogfdr, fill = timepo
   theme(legend.title=element_blank(),
         axis.text = element_text(colour = "black"),
         axis.title = element_text(color = "black"))
+```
+
+```{r save volcano plot dat, include=FALSE, echo=FALSE, eval=FALSE}
+writexl::write_xlsx(myPlot$data, path = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 3A TTE 6 mos vs flow and CSP IgG features volcano plot.xlsx")
 ```
 
 Volcano plot of CSP-specific IgG and flow cytometry features at each timepoint or calculated as fold-change
@@ -173,7 +179,7 @@ summarized_correlations_select <- summarized_correlations %>%
 summarized_correlations_select %>%
   knitr::kable()
 ```
-### Show correlation between CSP-specific memory B cells and Vδ2 γδ T cells with time-to-first parasitemia up to 6 months as scatter plot (Fig 3B of revised manuscript)
+### Show correlation between CSP-specific memory B cells and Vδ2 γδ T cells with time-to-first parasitemia up to 6 months as scatter plot (Fig 3B)
 
 Correlation between CSP-specific memory B cells and time-to-first parasitemia up to 6 months (n=183) by presence (not protected, NP) or absence (protected, P) of parasitemia through 3 months of follow up
 
@@ -227,6 +233,11 @@ CSP_IgG_TTE_plot <- CSP_IgG_postvax_cordat %>%
         axis.title = element_text(color = "black"))
 ```
 
+```{r save TE 6 mos vs MBCs scatter plot dat, include=FALSE, echo=FALSE, eval=FALSE}
+writexl::write_xlsx(CSP_MBC_TTE_plot$data, path = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 3B TTE 6 mos vs MBCs scatter plot.xlsx")
+```
+
+
 ```{r view scatter plot, echo=FALSE, fig.align='center', fig.width=12, fig.height=4, message=FALSE, warning=FALSE}
 ggarrange(CSP_IgG_TTE_plot, CSP_MBC_TTE_plot, common.legend = TRUE, nrow=1,  align = "v")
 ```
@@ -241,7 +252,7 @@ CSP_MBC_TTE_plot
 dev.off()
 ```
 
-### Correlate Baseline with CSP-specific memory B cells
+### Correlate baseline gene expression with CSP-specific memory B cells
 
 ```{r read in cpm data local, warning=FALSE, message=FALSE, echo=FALSE, eval=FALSE, include=FALSE}
 #local file: "PfSPZ_cpm_ExpressionSet_244x21815_AllGroups_bothBatches_0_rmBatchFX_06082021_TMT_logTRUE.rds"
@@ -311,13 +322,11 @@ ranklist <- summarized_cpm_feature %>%
 devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/NamedGeneRankList2GseaTable.R?raw=TRUE")
 GSEA_CPM_ranked_CSP_MBC_all <- NamedGeneRankList2GseaTable(rankedgenes = ranklist, geneset = "all", output_directory = tempdir(), filename_prefix =
                                                  "GSEA_baseline_CPM_CSP_MBC_all_n150", minSize = 20, fixed_seed = TRUE)
-
-closeAllConnections()
 ```
 
-### Plot GSEA results as bar plot (Fig 3C of manuscript)
+### Plot GSEA results as bar plot (Fig 3C)
 
-Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and % CSP-specific memory B cells at 2-weeks post-vaccination.
+Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and % CSP-specific memory B cells at 2-weeks post-vaccination. Only showing "MonacoModules" and "lowBTMs" with FDR<1%.
 
 ```{r arrange data for plots, echo = FALSE}
 myfunction <- function(leadingEdge) { length(unlist(strsplit(leadingEdge, ", "))) }
@@ -334,9 +343,9 @@ myGSEAClusterPlotDat <- GSEA_CPM_ranked_CSP_MBC_all %>%
     dplyr::select(module_type, pathway, edges, size, bubblelabel, NES, padj) %>%
   ungroup() %>%
   filter(!grepl("TBA", pathway)) %>%
-  #mutate(pathway = gsub("gd", "γδ", pathway)) %>%
-  #mutate(pathway = gsub("Vd2", "Vδ2", pathway)) %>%
-  #mutate(pathway = gsub("Vg", "Vγ", pathway)) %>%
+  mutate(pathway = gsub("gd", "γδ", pathway)) %>%
+  mutate(pathway = gsub("Vd2", "Vδ2", pathway)) %>%
+  mutate(pathway = gsub("Vg", "Vγ", pathway)) %>%
   mutate(pathway = gsub("HALLMARK_", "", pathway)) %>%
   mutate(pathway = gsub("_", " ", pathway)) %>%
   mutate(neglogpadj = -log10(padj)) %>%
@@ -355,7 +364,7 @@ myGSEAClusterPlot <- myGSEAClusterPlotDat %>%
   theme(legend.position = "bottom", axis.text.y = element_text(colour = myColors))
 ```
 
-```{r print GSEA plot, fig.align='center', fig.height=6, fig.width=6, echo=FALSE}
+```{r print GSEA plot, fig.align='center', fig.height=6, fig.width=6, echo=TRUE}
 addSmallLegend <- function(myPlot, pointSize = 6, textSize = 6, spaceLegend = 1) {
     myPlot +
         guides(shape = guide_legend(override.aes = list(size = pointSize)),
@@ -367,15 +376,19 @@ addSmallLegend <- function(myPlot, pointSize = 6, textSize = 6, spaceLegend = 1)
 print(addSmallLegend(myGSEAClusterPlot))
 ```
 
-```{r save gsea plot CSP MBC}
+```{r save gsea  CSP MBC plot dat, include=FALSE, echo=FALSE, eval=FALSE}
+writexl::write_xlsx(myGSEAClusterPlot$data, path = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 3C GSEA CSP MBC correlated genes bar plot.xlsx")
+```
+
+
+```{r save gsea plot CSP MBC, include=FALSE, eval=FALSE, echo=FALSE}
 pdf(paste0(figdir, "Figure 3C GSEA CSP MBC barplot JCI Revised.pdf"), width=5, height = 5)
 print(addSmallLegend(myGSEAClusterPlot))
 dev.off()
 ```
 
+```{r apply fgsea, warning=FALSE, message=FALSE, include=FALSE, echo=FALSE, eval=FALSE}
 ### Apply GSEA to Placebo
-
-```{r apply fgsea, warning=FALSE, message=FALSE}
 res_list <- list(NULL, NULL, NULL, NULL)
 names(res_list) <- c("CSP_IgG", "CSP_MBC", "Vd2", "TTE6")
 
@@ -426,16 +439,15 @@ for(i in names(res_list)){
                                                  "GSEA_baseline_CPM_CSP_IgG_CSP_MBC_Vd2_TTE_Placebo", minSize = 20, fixed_seed = TRUE)
   
 }
-closeAllConnections()
+#closeAllConnections()
 ```
 
 ```{r save placebo_bound_df_GSEA, echo=FALSE, eval=FALSE, include=FALSE}
 saveRDS(placebo_bound_df_GSEA, "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/placebo_bound_df_GSEA_kendall.rds")
 ```
 
+```{r apply fgsea low-dose PfSPZ, warning=FALSE, message=FALSE, include=FALSE, echo=FALSE, eval=FALSE}
 ### Apply GSEA to low-dose PfSPZ
-
-```{r apply fgsea low-dose PfSPZ, warning=FALSE, message=FALSE}
 res_list <- list(NULL, NULL, NULL, NULL)
 names(res_list) <- c("CSP_IgG", "CSP_MBC", "Vd2", "TTE6")
 
@@ -486,16 +498,15 @@ for(i in names(res_list)){
                                                  "GSEA_baseline_CSP_IgG_CSP_MBC_Vd2_TTE_low_dose_PfSPZ", minSize = 20, fixed_seed = TRUE)
   
 }
-closeAllConnections()
+#closeAllConnections()
 ```
 
 ```{r save lowdose_PfSPZ_bound_df_GSEA, echo=FALSE, eval=FALSE, include=FALSE}
 saveRDS(lowdose_PfSPZ_bound_df_GSEA, "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/lowdose_PfSPZ_bound_df_GSEA_kendall.rds")
 ```
 
+```{r apply fgsea mid-dose PfSPZ, warning=FALSE, message=FALSE, include=FALSE, echo=FALSE, eval=FALSE}
 ### Apply GSEA to mid-dose PfSPZ
-
-```{r apply fgsea mid-dose PfSPZ, warning=FALSE, message=FALSE}
 res_list <- list(NULL, NULL, NULL, NULL)
 names(res_list) <- c("CSP_IgG", "CSP_MBC", "Vd2", "TTE6")
 
@@ -546,16 +557,16 @@ for(i in names(res_list)){
                                                  "GSEA_baseline_CSP_IgG_CSP_MBC_Vd2_TTE_mid_dose_PfSPZ", minSize = 20, fixed_seed = TRUE)
   
 }
-closeAllConnections()
+#closeAllConnections()
 ```
 
 ```{r save middose_PfSPZ_bound_df_GSEA, echo=FALSE, eval=FALSE, include=FALSE}
 saveRDS(middose_PfSPZ_bound_df_GSEA, "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/middose_PfSPZ_bound_df_GSEA_kendall.rds")
 ```
 
+```{r apply fgsea high-dose PfSPZ, warning=FALSE, message=FALSE, include=FALSE, echo=FALSE, eval=FALSE}
 ### Apply GSEA to high-dose PfSPZ
 
-```{r apply fgsea high-dose PfSPZ, warning=FALSE, message=FALSE}
 res_list <- list(NULL, NULL, NULL, NULL)
 names(res_list) <- c("CSP_IgG", "CSP_MBC", "Vd2", "TTE6")
 
@@ -606,16 +617,16 @@ for(i in names(res_list)){
                                                  "GSEA_baseline_CSP_IgG_CSP_MBC_Vd2_TTE_high_dose_PfSPZ", minSize = 20, fixed_seed = TRUE)
   
 }
-closeAllConnections()
+#closeAllConnections()
 ```
 
 ```{r save highdose_PfSPZ_bound_df_GSEA, echo=FALSE, eval=FALSE, include=FALSE}
 saveRDS(highdose_PfSPZ_bound_df_GSEA, "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/highdose_PfSPZ_bound_df_GSEA_kendall.rds")
 ```
 
-Collapse all lists into dataframes and bind
+```{r collapse all lists into dataframes and bind, echo=FALSE, eval=FALSE, include=FALSE}
+#Collapse all lists into dataframes and bind
 
-```{r collapse all lists into dataframes and bind}
 placebo_bound_df <- bind_rows(placebo_bound_df_GSEA, .id = "feature") %>%
   mutate(dosegroup = "Placebo") %>%
   dplyr::select(dosegroup, everything())
@@ -639,12 +650,12 @@ alldose_bound_df <- bind_rows(placebo_bound_df,
   mutate(dosegroup = factor(dosegroup, levels = c("Placebo", "4.5x10^5 PfSPZ", "9.0x10^5 PfSPZ", "1.8x10^6 PfSPZ")))
 ```
 
+```{r set options for gsea plots, echo=FALSE, eval=FALSE, include=FALSE}
 ### Set options for GSEA plots
 
-- set FDR cutoff for visualization
-- set types of modules to display
+# - set FDR cutoff for visualization
+# - set types of modules to display
 
-```{r set options for gsea plots}
 myfunction <- function(leadingEdge) {length(unlist(strsplit(leadingEdge, ", "))) } #function to split leading edges
 myFDRcutoff <- 0.05
 #myModules <- c("highBTMs", "MonacoModules", "BloodGen3Module", "MSigDB_Hallmark_v7.4")
@@ -654,9 +665,9 @@ myModules <- c("highBTMs", "MonacoModules", "MSigDB_Hallmark_v7.4")
 #myModules <- c("highBTMs", "MonacoModules", "lowBTMs", "BloodGen3Module","MSigDB_Hallmark_v7.4")
 ```
 
+```{r arrange plot TTE GSEA all dose groups, echo=FALSE, eval=FALSE, include=FALSE}
 ### Plot TTE correlating GSEA results as bubble plot, all dose groups
 
-```{r arrange plot TTE GSEA all dose groups}
 basetextsize <- 8.5  
 myfont <- "Helvetica"
 bubble_max_size <- 8
@@ -707,7 +718,7 @@ all_doses_plot_dat_TTE6 <- alldose_bound_df %>%
    coord_flip() 
 ```
 
-```{r plot TTE GSEA all dose groups, fig.align='center', fig.height=10, fig.width=4, echo=TRUE}
+```{r plot TTE GSEA all dose groups, fig.align='center', fig.height=10, fig.width=4, echo=FALSE, eval=FALSE, include=FALSE}
 ggarrange(all_dose_hiBTM_TTE6_plot, NULL ,all_dose_hallmark_TTE6_plot, ncol=1, common.legend = TRUE, align = "hv", legend = "bottom", heights = c(0.65, 0.001, 1))
 ```
 
@@ -717,9 +728,9 @@ ggarrange(all_dose_hiBTM_TTE6_plot, NULL ,all_dose_hallmark_TTE6_plot, ncol=1, c
 dev.off()
 ```
 
+```{r arrange plot CSP_MBC GSEA all dose groups, echo=FALSE, eval=FALSE, include=FALSE}
 ### Plot CSP MBC correlating GSEA results as bubble plot, all dose groups
 
-```{r arrange plot CSP_MBC GSEA all dose groups}
 basetextsize <- 8.5  
 myfont <- "Helvetica"
 bubble_max_size <- 8
@@ -787,7 +798,7 @@ all_doses_plot_dat_CSP_MBC <- alldose_bound_df %>%
    coord_flip() 
 ```
 
-```{r plot CSP_MBC GSEA all dose groups, fig.align='center', fig.height=9, fig.width=4, echo=FALSE}
+```{r plot CSP_MBC GSEA all dose groups, fig.align='center', fig.height=9, fig.width=4, echo=FALSE, eval=FALSE, include=FALSE}
 ggarrange(all_dose_hiBTM_CSP_MBC_plot, NULL ,all_dose_Monaco_CSP_MBC_plot, ncol=1, common.legend = TRUE, align = "hv", legend = "bottom", heights = c(1, 0.001, 1))
 ```
 ```{r save plot CSP_MBC GSEA all dose groups, fig.align='center', fig.height=10, fig.width=4, echo=FALSE, eval=FALSE, include=FALSE}
@@ -796,9 +807,10 @@ ggarrange(all_dose_hiBTM_CSP_MBC_plot, NULL ,all_dose_Monaco_CSP_MBC_plot, ncol=
 dev.off()
 ```
 
+
+```{r arrange plot CSP_IgG GSEA all dose groups, echo=FALSE, eval=FALSE, include=FALSE}
 ### Plot CSP IgG correlating GSEA results as bubble plot, all dose groups
 
-```{r arrange plot CSP_IgG GSEA all dose groups}
 basetextsize <- 7.5  
 myfont <- "Helvetica"
 bubble_max_size <- 6
@@ -827,13 +839,14 @@ all_doses_plot_CSP_IgG <- alldose_bound_df %>%
 facet_wrap(~module_type, scales = "free_x", nrow= 5)
 ```
 
-```{r plot CSP_IgG GSEA all dose groups, fig.align='center', fig.height=16, fig.width=12, echo=FALSE}
+```{r plot CSP_IgG GSEA all dose groups, fig.align='center', fig.height=16, fig.width=12, echo=FALSE, eval=FALSE, include=FALSE}
 all_doses_plot_CSP_IgG
 ```
 
+
+```{r arrange plot Vd2 GSEA all dose groups, echo=FALSE, eval=FALSE, include=FALSE}
 ### Plot Vd2 gd T correlating GSEA results as bubble plot, all dose groups
 
-```{r arrange plot Vd2 GSEA all dose groups}
 basetextsize <- 7.5  
 myfont <- "Helvetica"
 bubble_max_size <- 6
@@ -862,15 +875,15 @@ all_doses_plot_Vd2 <- alldose_bound_df %>%
 facet_wrap(~module_type, scales = "free_x", nrow= 5)
 ```
 
-```{r plot Vd2 GSEA all dose groups, fig.align='center', fig.height=16, fig.width=12, echo=FALSE}
+```{r plot Vd2 GSEA all dose groups, fig.align='center', fig.height=16, fig.width=12, echo=FALSE, eval=FALSE, include=FALSE}
 all_doses_plot_Vd2
 ```
 
+```{r arrange data for plots Placebo, echo=FALSE, eval=FALSE, include=FALSE}
 ### Plot GSEA results as bar plot, Placebo
 
-Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and CSP-specific IgG at 2-weeks post-vaccination; % CSP-specific of memory B cells at 2-weeks post-vaccination; Vd2 gdT cells at baseline; and time to first parasitemia. This exploratory analysis is not included in manuscript.
+# Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and CSP-specific IgG at 2-weeks post-vaccination; % CSP-specific of memory B cells at 2-weeks post-vaccination; Vd2 gdT cells at baseline; and time to first parasitemia. This exploratory analysis is not included in manuscript.
 
-```{r arrange data for plots Placebo, echo = FALSE}
 my_placebo_GSEA_PlotDat <- alldose_bound_df %>%
   filter(dosegroup == "Placebo") %>%
   filter(padj < myFDRcutoff) %>%
@@ -906,15 +919,15 @@ my_placebo_GSEA_Plot  <- my_placebo_GSEA_PlotDat  %>%
   facet_wrap(~feature)
 ```
 
-```{r print GSEA plot Placebo, fig.align='center', fig.height=16, fig.width=12, echo=FALSE}
+```{r print GSEA plot Placebo, fig.align='center', fig.height=16, fig.width=12, echo=FALSE, eval=FALSE, include=FALSE}
 my_placebo_GSEA_Plot
 ```
 
+```{r arrange data for plots low-dose PfSPZ, echo=FALSE, eval=FALSE, include=FALSE}
 ### Plot GSEA results as bar plot, low-dose PfSPZ
 
-Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and CSP-specific IgG at 2-weeks post-vaccination; % CSP-specific of memory B cells at 2-weeks post-vaccination; Vd2 gdT cells at baseline; and time to first parasitemia.
+# Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and CSP-specific IgG at 2-weeks post-vaccination; % CSP-specific of memory B cells at 2-weeks post-vaccination; Vd2 gdT cells at baseline; and time to first parasitemia.
 
-```{r arrange data for plots low-dose PfSPZ, echo = FALSE}
 my_lowdose_GSEA_PlotDat <- my_lowdose_GSEA_Plot <- c()
 for(i in names(lowdose_PfSPZ_bound_df_GSEA)){
   my_lowdose_GSEA_PlotDat[[i]] <- lowdose_PfSPZ_bound_df_GSEA[[i]] %>%
@@ -950,16 +963,16 @@ for(i in names(lowdose_PfSPZ_bound_df_GSEA)){
 }
 ```
 
-```{r print GSEA plot low-dose PfSPZ, fig.align='center', fig.height=12, fig.width=12, echo=FALSE}
+```{r print GSEA plot low-dose PfSPZ, fig.align='center', fig.height=12, fig.width=12, echo=FALSE, eval=FALSE, include=FALSE}
 low_dose_plot <- ggarrange(plotlist = my_lowdose_GSEA_Plot, labels = names(my_lowdose_GSEA_Plot),common.legend = TRUE, heights = c(1,2), align = "hv")
 low_dose_plot
 ```
 
+```{r arrange data for plots mid-dose PfSPZ, echo=FALSE, eval=FALSE, include=FALSE}
 ### Plot GSEA results as bar plot, mid-dose PfSPZ
 
-Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and CSP-specific IgG at 2-weeks post-vaccination; % CSP-specific of memory B cells at 2-weeks post-vaccination; Vd2 gdT cells at baseline; and time to first parasitemia.
+# Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and CSP-specific IgG at 2-weeks post-vaccination; % CSP-specific of memory B cells at 2-weeks post-vaccination; Vd2 gdT cells at baseline; and time to first parasitemia.
 
-```{r arrange data for plots mid-dose PfSPZ, echo = FALSE}
 my_middose_GSEA_PlotDat <- my_middose_GSEA_Plot <- c()
 for(i in names(middose_PfSPZ_bound_df_GSEA)){
   my_middose_GSEA_PlotDat[[i]] <- middose_PfSPZ_bound_df_GSEA[[i]] %>%
@@ -995,16 +1008,16 @@ for(i in names(middose_PfSPZ_bound_df_GSEA)){
   }
 ```
 
-```{r print GSEA plot mid-dose PfSPZ, fig.align='center', fig.height=12, fig.width=12, echo=FALSE}
+```{r print GSEA plot mid-dose PfSPZ, fig.align='center', fig.height=12, fig.width=12, echo=FALSE, eval=FALSE, include=FALSE}
 mid_dose_plot <- ggarrange(plotlist = my_middose_GSEA_Plot, labels = names(my_middose_GSEA_Plot),common.legend = TRUE, heights = c(1,2), align = "hv")
 mid_dose_plot
 ```
 
+```{r arrange data for plots high-dose PfSPZ, echo=FALSE, eval=FALSE, include=FALSE}
 ### Plot GSEA results as bar plot, high-dose PfSPZ
+# 
+# Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and CSP-specific IgG at 2-weeks post-vaccination; % CSP-specific of memory B cells at 2-weeks post-vaccination; Vd2 gdT cells at baseline; and time to first parasitemia.
 
-Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and CSP-specific IgG at 2-weeks post-vaccination; % CSP-specific of memory B cells at 2-weeks post-vaccination; Vd2 gdT cells at baseline; and time to first parasitemia.
-
-```{r arrange data for plots high-dose PfSPZ, echo = FALSE}
 my_highdose_GSEA_PlotDat <- my_highdose_GSEA_Plot <- c()
 for(i in names(highdose_PfSPZ_bound_df_GSEA)){
   my_highdose_GSEA_PlotDat[[i]] <- highdose_PfSPZ_bound_df_GSEA[[i]] %>%
@@ -1040,12 +1053,12 @@ for(i in names(highdose_PfSPZ_bound_df_GSEA)){
   }
 ```
 
-```{r print GSEA plot high-dose PfSPZ, fig.align='center', fig.height=8, fig.width=10, echo=FALSE}
+```{r print GSEA plot high-dose PfSPZ, fig.align='center', fig.height=8, fig.width=10, echo=FALSE, eval=FALSE, include=FALSE}
 high_dose_plot <- ggarrange(plotlist = my_highdose_GSEA_Plot, labels = names(my_highdose_GSEA_Plot),common.legend = TRUE, heights = c(1,1), align = "hv")
 high_dose_plot
 ```
 
-```{r print GSEA TTE all doses, fig.align='center', fig.height=9, fig.width=12, echo=FALSE}
+```{r print GSEA TTE all doses, fig.align='center', fig.height=9, fig.width=12, echo=FALSE, eval=FALSE, include=FALSE}
 alldose_GSEA_TTE_plot <- ggarrange(my_placebo_GSEA_Plot$TTE6, my_middose_GSEA_Plot$TTE6, my_lowdose_GSEA_Plot$TTE6, my_highdose_GSEA_Plot$TTE6,
                                    labels = c("Placebo","9.0x10^5 PfSPZ", "4.5x10^5 PfSPZ", "1.8x10^6 PfSPZ"),
                                    common.legend = TRUE, ncol = 2, nrow= 2, align = "hv", heights = c(1.5,1))
