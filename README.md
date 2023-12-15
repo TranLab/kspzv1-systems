@@ -19,6 +19,8 @@ Code for systems analysis of KSPZV1 malaria vaccine trial.
 
 [Figures 4D, 4E, 4F, Tables S3, S4, DGE and GSEA within and between Δ protected and Δ not protected for 1.8x10^6 PfSPZ group (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-DGE-Delta-Postvax-limma-voom-JCI-revision.html)
 
+[Figures S4A, S4B, S4C, pre-immunization baseline DGE and GSEA comparison for KSPZV1, VRC 312, VRC 314, and BSPZV1 studies](https://tranlab.github.io/kspzv1-systems/html/PfSPZ-edgeR-DGE-Camera-GSEA-Baseline-on-VRC312-and-VRC314-JCI-Revision.html)
+
 ## Weighted gene correlation network analyses
 
 [Figures 2A, 2B, 2C. WGCNA, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-WGCNA-Baseline-JCI-revision.html) 
@@ -35,19 +37,11 @@ Code for systems analysis of KSPZV1 malaria vaccine trial.
 
 [Figures 6E, S7D, XGBoost, Placebo, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KPSZV1-Baseline-Placebo-Multimodal-ML-Revised-TMT-plot-ROC-SHAP-from-CV-data-JCI-Revision.html) 
 
-## Correlations and chord diagrams
+## Integrated, multi-modal correlations and network plots
 
-[Correlation between cellular and CSP-specific response features and time-to-first parasitemia through 6 month surveillance](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-Correlate-Cellular-and-CSP-IgG-Features-to-TTE-6-months.html)
+[Figure 5, Spearman correlations between BTMs, flow cytometry features, cytokines (baseline only) and CSP-specific IgG response and time-to-first parasitemia through 6 month surveillance](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-Correlations-All-Features-and-TTE-All-Timepoints-BTM-level-JCI-Revision.html)
 
-[Correlations, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-Correlations-and-Chord-Diagrams-Baseline-06012022.html)
-
-[Correlations, post-vax only (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-Correlations-and-Chord-Diagrams-Postvax-06012022.html)
-
-[Correlations, Δ (post-vax/baseline) (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-Correlations-and-Chord-Diagrams-Delta-06012022.html)
-
-[Gene-level Correlations, baseline (NEW)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-gene-level-Chord-Diagram.html)
-
-[Gene-level Correlations, Δ (post-vax/baseline) (NEW)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-gene-level-correlations-to-postvax-data-Fig-S6-06012022.html)
+[Spearman correlations between gene expression, flow cytometry features, cytokines (baseline only) and CSP-specific IgG response and time-to-first parasitemia through 6 month surveillance](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-Correlations-All-Features-and-TTE-All-Timepoints-Gene-level-JCI-Revision.html)
 
 ## Other
 
