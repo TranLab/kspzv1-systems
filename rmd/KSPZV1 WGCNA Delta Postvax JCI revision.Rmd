@@ -1,8 +1,10 @@
 ---
 title: "KSPZV1 WGCNA Delta Postvax"
 author: "Tuan M. Tran"
-date: "11/22/2023"
-output: html_document
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document :
+    theme: cerulean
 ---
 
 ### Objective
@@ -14,7 +16,7 @@ References:
 https://horvath.genetics.ucla.edu/html/CoexpressionNetwork/Rpackages/WGCNA/Tutorials/
 https://horvath.genetics.ucla.edu/html/CoexpressionNetwork/JMiller/Tutorial%20document.pdf
 
-Reviewer requested that we provide scatter plots for the correlations between modules and phenotypes. Review of the original code revealed that using Pearson's or Spearman's correlation to assess the relationship between modules and binary traits was not appropriate. Thus, we performed limma (empirical Bayes moderated t test) and presented differences as beeswarm plots with mean and 95%CI.
+Reviewer requested that we provide scatter plots for the correlations between modules and phenotypes. Review of the original code revealed that using Pearson's or Spearman's correlation to assess the relationship between modules and binary traits was not appropriate. Thus, for binary traits, we performed limma (empirical Bayes moderated t test) and presented differences as beeswarm plots with mean and 95%CI. For continuous variables, we performed Spearman's correlation.
 
 ### Load packages
 
@@ -420,9 +422,10 @@ all_module_trait_hm_dat <- all_module_trait_dat %>%
   pivot_wider(names_from = comparison, values_from = logFC) %>%
   column_to_rownames(var = "hub_gene")
 
-lapply(WGCNA_dat_select, nrow)
+#lapply(WGCNA_dat_select, nrow)
 ```
-```{r prepare heatmap wgcna limma, fig.align='center', fig.height=5, fig.width=7, include=FALSE, echo=FALSE, eval=FALSE}
+
+```{r prepare heatmap wgcna limma, fig.align='center', fig.height=5, fig.width=7}
 ### Heatamp for WGCNA Limma data
 #Look only at modules that were significantly different between P vs NP, which is RIOK3 and SEC62
 
@@ -486,7 +489,7 @@ my_hm <- Heatmap(all_module_trait_binary_hm_mat,
         border = TRUE)
 ```
 
-```{r draw hm, fig.align='center', fig.width=4, fig.height=4, include=FALSE, echo=FALSE, eval=FALSE}
+```{r draw hm, fig.align='center', fig.width=4, fig.height=4}
 draw(my_hm)
 ```
 
@@ -587,13 +590,13 @@ all_beeswarm_plot <- beeswarmplot_dat_factor %>%
   #       plot.title = element_text(size=8))
 ```
 
-#### Figure S6 of revised manuscript
+#### Figure S6A of revised manuscript
 
 ```{r plot all_beeswarm_plot, fig.align='center', fig.height=6, fig.width=2, include=FALSE, eval=FALSE, echo=FALSE}
 all_beeswarm_plot
 ```
 
-```{r save scatter pltos and beeswarm arrange, fig.align='center', fig.height=12, fig.width=12}
+```{r save scatter pltos and beeswarm arrange, fig.align='center', fig.height=12, fig.width=12, include=FALSE, eval=FALSE, echo=FALSE}
 pdf(file = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Fig SS6A JCI revised WGCNA Spearman scatterplot and limma boxplots.pdf", height = 12, width = 10)
 ggarrange(my_scatter_plots, all_beeswarm_plot, widths = c(4,1.15))
 dev.off()
@@ -713,14 +716,13 @@ my_limma_hm <- Heatmap(hm_limma_mat,
 ```{r view combined heatmaps, fig.align='center', fig.width=5, fig.height=4}
 my_hm + my_limma_hm
 ```
-```{r save combined heatmaps, fig.align='center', fig.width=5, fig.height=4}
+```{r save combined heatmaps, fig.align='center', fig.width=5, fig.height=4, eval=FALSE, include=FALSE, echo=FALSE}
 pdf(file = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Fig 4B JCI revised WGCNA Spearman and limma heatmap.pdf", height = 4, width = 3.75)
 my_hm + my_limma_hm
 dev.off()
 ```
 
 ```{r save heatmap data, eval=FALSE, include=FALSE, echo=FALSE}
-
 combined_hm_mat <- as.data.frame(hm_cor_mat) %>%
   rownames_to_column(var = "hub_gene") %>%
   left_join(., as.data.frame(hm_limma_mat) %>%
@@ -754,11 +756,12 @@ graph <- wgcna2igraph(net = net, WGCNA_matrix, modules2plot = myColors,
 hubscores <- hub_score(graph, scale = TRUE, weights = NULL,
   options = arpack_defaults)
 ```
+
 ### Plot network graph of significant modules (Figure 4C of JCI revision)
 
 Network graphs of significant modules containing nodes (red dots) and edges (lines) meeting minimum thresholds. Correlations between nodes in different modules are shown as black edges.
 
-```{r plot networkd graph jci revision, message=FALSE, warning=FALSE, fig.align='center', fig.width=8, fig.height=8, echo=FALSE}
+```{r plot networkd graph jci revision, message=FALSE, warning=FALSE, fig.align='center', fig.width=8, fig.height=8}
 plot(graph)
 ```
 
@@ -767,8 +770,6 @@ pdf(file = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manu
 plot(graph)
 dev.off()
 ```
-
-### FGSEA on WGCNA Results, JCI revision
 
 List number of genes per module
 
@@ -785,10 +786,12 @@ for(i in downselected_MEs){
 lapply(WGCNA_dat_select, nrow)
 ```
 
-rank by module membership
+```{r FGSEA on WGCNA Results, warning=FALSE, message=FALSE, include=FALSE, echo=FALSE, eval=FALSE}
+### FGSEA on WGCNA Results
 
-```{r FGSEA on WGCNA Results, warning=FALSE, message=FALSE}
-closeAllConnections()
+#rank by module membership
+
+#closeAllConnections()
 minSize <- 5
 # Make rank list; ranked by ModuleMembership correlation
 ranks <- GSEA_baseline_bound_df <- c()
@@ -802,11 +805,12 @@ for(k in names(WGCNA_dat_select)){
                                                                                  "_minSize", minSize), scoreType = "pos", minSize = minSize, fixed_seed = TRUE)
   }
 ```
+
+```{r prepare data wgcna gsea, warning=FALSE, message=FALSE, include=FALSE, echo=FALSE, eval=FALSE}
 ### WCGNA GSEA Results
 
-delta analysis
+#delta analysis
 
-```{r prepare data wgcna gsea, warning=FALSE, message=FALSE}
 myModuleTypes <- c("MSigDB_Hallmark_v7.4", "MSigDB_C2_kegg_v7.4", "highBTMs", "lowBTMs", "MonacoModules", "BloodGen3Module")
 myGSEAClusterPlotDat <- GSEA_baseline_bound_df$MEpaleturquoise %>%
   mutate(module_hub = "BTLA") %>%
@@ -840,12 +844,12 @@ myGSEAClusterPlotDat <- GSEA_baseline_bound_df$MEpaleturquoise %>%
   droplevels()
 ```
 
+```{r prepare , warning=FALSE, message=FALSE, fig.width=6, fig.height=6, echo=FALSE, eval=FALSE, include=FALSE}
 ### GSEA Bubble plot (Figure S6B in JCI Revision)
 
-Gene set enrichment analysis of genes ranked by membership within indicated modules which were determined by
-weight gene correlation network analysis (WGCNA) of whole-blood Δ transcriptomes.
+# Gene set enrichment analysis of genes ranked by membership within indicated modules which were determined by
+# weight gene correlation network analysis (WGCNA) of whole-blood Δ transcriptomes.
 
-```{r prepare , warning=FALSE, message=FALSE, fig.width=6, fig.height=6}
 addSmallLegend <- function(myPlot, pointSize = 2.5, textSize = 4, spaceLegend = 0.5) {
     myPlot +
         guides(shape = guide_legend(override.aes = list(size = pointSize)),
@@ -875,15 +879,15 @@ myGSEAClusterPlot <- myGSEAClusterPlotDat %>%
 ```
 
 
-```{r plot delta bubble, fig.align='center', fig.height=5, fig.width=6, echo=FALSE}
+```{r plot delta bubble, fig.align='center', fig.height=5, fig.width=6, echo=FALSE, eval=FALSE, include=FALSE}
 # Apply on original plot
 addSmallLegend(myGSEAClusterPlot)
 ```
 
-### Overrepesentation Analysis
+### Over-representation Analysis
 
 ```{r WGCNA ora, message=FALSE, warning=FALSE}
-closeAllConnections()
+#closeAllConnections()
 source("https://raw.githubusercontent.com/TranLab/kspzv1-systems/main/helper/ApplyORA2Genesets.R")
 myuniverse <- unique(fData(x)[fData(x)$EnsemblID %in% colnames(WGCNA_matrix),]$GeneSymbol)
 ORA_baseline_bound_df <- c()
@@ -941,7 +945,7 @@ ORA_baseline_allbound <- bind_rows(NKG2E_ORA_baseline_bound,
                 pct_overlap, size, overlapGenes, pval, padj, neglogpadj)
 ```
 
-### Plot WGCNA overrepresentation results, JCI revision
+### Plot WGCNA over-representation results, JCI revision
 
 delta analysis
 
@@ -1013,7 +1017,7 @@ myORABubblePlot <- myORAClusterPlotDat %>%
   coord_flip()
 ```
 
-### Delta WGCNA Top Modules ORA bar plots (Figure S6B, JCI revision)
+### Delta WGCNA Top Modules ORA bubble plots (Figure S6B, JCI revision)
  
 ```{r plot myORABubblePlot, fig.align='center', fig.width=7, fig.height=7, warning=FALSE, message=FALSE, echo=FALSE}
 print(myORABubblePlot)
