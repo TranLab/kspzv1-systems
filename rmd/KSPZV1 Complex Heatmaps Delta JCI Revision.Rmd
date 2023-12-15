@@ -274,6 +274,39 @@ Note: may have to run this chunk directly in console if you get the following er
 hm <- draw(hm)
 ```
 
+```{r save heatmap data df, include=FALSE, echo=FALSE, eval = FALSE}
+plot_dat_path <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/"
+
+#annotation df
+writexl::write_xlsx(annot.df, path = paste0(plot_dat_path, "Figure 4A Delta Heatmap Annotation Dataframe.xlsx"))
+
+#heatmap data
+ordered_hm_dat <- data.frame(exprs(x)[unlist(row_order(hm)), unlist(column_order(hm))]) %>%
+  rownames_to_column(var = "annotation_or_ensembl_ID") %>%
+  mutate(across(everything(), as.character))
+
+ordered_annot_dat <- data.frame(t(annot.df[unlist(column_order(hm)),]))  %>%
+  rownames_to_column(var = "annotation_or_ensembl_ID") %>%
+  mutate(across(everything(), as.character))
+
+ordered_combined_dat <- bind_rows(ordered_annot_dat, ordered_hm_dat)
+
+exprs(x) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "ensembl_id") %>%
+  writexl::write_xlsx(., path = paste0(plot_dat_path, "Figure 4A Delta Heatmap Matrix Data.xlsx"))
+
+writexl::write_xlsx(data.frame(unlist(column_order(hm))), path = paste0(plot_dat_path, "Figure 4A Delta Heatmap Column Order.xlsx"))
+
+writexl::write_xlsx(data.frame(unlist(row_order(hm))), path = paste0(plot_dat_path, "Figure 4A Delta Heatmap Row Order.xlsx"))
+
+writexl::write_xlsx(data.frame(unlist(row_order(hm))), path = paste0(plot_dat_path, "Figure 4A Delta Heatmap Row Order.xlsx"))
+
+writexl::write_xlsx(ordered_combined_dat, path = paste0(plot_dat_path, "Figure 4A Delta Ordered Heatmap and Column Annotations.xlsx"))
+```
+
+
+
 ```{r extract clustering information columns 2, message=FALSE, warning=FALSE}
 c.dend <- column_dend(hm)  #Extract col dendrogram
 ccl.list <- column_order(hm)  #Extract clusters (output is a list)
