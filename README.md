@@ -13,11 +13,11 @@ Code for systems analysis of KSPZV1 malaria vaccine trial.
 
 [Figure 2E, IPA Upstream Regulator between protected and not protected by treatment group, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-DGE-Baseline-Revision-IPA-Plots.html)
 
-[DGE and GSEA within and between Δ protected and Δ not protected for 1.8x10^6 PfSPZ group (REVISED)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-DGE-Delta-Postvax-High-Dose-PfSPZ-limma-voom-Revision.html)
-
 [Figures 3A-C, CSP IgG and flow cytometry features that correlate with time-to-first-parasitemia (6 months) followed by GSEA](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-Correlate-Cellular-and-CSP-IgG-Features-to-TTE-6-months-JCI-Revision.html)
 
 [Figures 3D and 3E, DGE and GSEA between CSP-specific IgG high responders vs low responders in 1.8x10^6 PfSPZ treatment group, pre-immunization transcriptomes](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-DGE-CSP-IgG-Response-Baseline-JCI-Revision.html)
+
+[Figures 4D, 4E, 4F, Tables S3, S4, DGE and GSEA within and between Δ protected and Δ not protected for 1.8x10^6 PfSPZ group (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-DGE-Delta-Postvax-limma-voom-JCI-revision.html)
 
 ## Weighted gene correlation network analyses
 
