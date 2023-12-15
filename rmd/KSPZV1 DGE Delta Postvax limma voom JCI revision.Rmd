@@ -1,8 +1,10 @@
 ---
 title: "KSPZV1 DGE Δ (postvax/baseline) limma voom - JCI revision"
 author: "Tuan M. Tran"
-date: "11/24/2023"
-output: html_document
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document :
+    theme: cerulean
 ---
 
 ### Objective
@@ -10,7 +12,13 @@ output: html_document
 Perform differential gene expression using limma voom to assess differences between protected and not protected infants in the KSPZV1 malaria vaccine trial.
 This analysis specifically evaluates differences in post-vax with adjustment for baseline.
 
-Includes adjustments for study site, baseling CSP-specific IgG, and malaria during vaccine period.
+This analysis also includes adjustments for:
+
+1. Batch
+2. Sex
+3. Study site
+4. log10(CSP Ab + 1)
+5. number of malaria infections during vaccination period
 
 ```{r libraries, message=FALSE, warning=FALSE}
 library(knitr)
@@ -31,9 +39,11 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ### Load ExpressionSet
 
-```{r load SeqExpressionSet 2, message=FALSE, warning=FALSE}
+```{r load SeqExpressionSet local, message=FALSE, warning=FALSE, include=FALSE, eval=FALSE, echo=FALSE}
 #local path: "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 SeqExpressionSet Baseline Postvax Reduced Phenodat 35716x487.rds"
+```
 
+```{r load SeqExpressionSet googledrive, message=FALSE, warning=FALSE}
 #from google drive
 temp <- tempfile(fileext = ".rds")
 dl <- drive_download(
@@ -48,9 +58,8 @@ x$treat <- factor(x$treat, levels = c("Placebo", "4.5 x 10^5 PfSPZ", "9.0 x 10^5
 myGroups <- unique(x$treat)
 ```
 
-
 ```{r more reduction, echo=FALSE}
-xgroup <- setNames(as.list(c(1:4)), c("Placebo", "4.5 x 10^5 PfSPZ", "9.0 x 10^5 PfSPZ", "1.8 x 10^6 PfSPZ"))
+#xgroup <- setNames(as.list(c(1:4)), c("Placebo", "4.5 x 10^5 PfSPZ", "9.0 x 10^5 PfSPZ", "1.8 x 10^6 PfSPZ")) #if running for all dose groups
 xgroup <- setNames(as.list(c(1:1)), c("1.8 x 10^6 PfSPZ"))
 for(i in names(xgroup)){
   xgroup[[i]] <- x[, which(x$treat == i)]
@@ -68,13 +77,15 @@ for(i in names(xgroup)){
 ### Build DGEList Object
 
 ```{r make DGEList object, message=FALSE, warning=FALSE}
-#Define group by dose, timepoint and outcome
+#Define group by dose, timepoint and outcome #if running for all dose groups
 #ygroup <- setNames(as.list(c(1:4)), c("Placebo", "4.5 x 10^5 PfSPZ", "9.0 x 10^5 PfSPZ", "1.8 x 10^6 PfSPZ"))
 ygroup <- setNames(as.list(c(1:1)), c("1.8 x 10^6 PfSPZ"))
 for(i in names(ygroup)){
-  ygroup[[i]]  <- DGEList(counts=counts(xgroup[[i]]), genes=fData(xgroup[[i]]), group= factor(paste(xgroup[[i]]$treat, xgroup[[i]]$Timepoint, xgroup[[i]]$Outcome, sep = "_")), remove.zeros=T)
+  ygroup[[i]]  <- DGEList(counts=counts(xgroup[[i]]), genes=fData(xgroup[[i]]), group= factor(paste(xgroup[[i]]$treat, xgroup[[i]]$Timepoint,
+                                                                                                    xgroup[[i]]$Outcome, sep = "_")),
+                          remove.zeros=T)
   ygroup[[i]]$samples$PATID <- gsub("_.*", "", rownames(ygroup[[i]]$samples))
-}
+  }
 ```
 
 ### Filter out low expression features
@@ -88,7 +99,7 @@ for(i in names(ygroup)){
 }
 ```
 
-##Remove unpaired samples and then arrange by patient and timepoint
+## Remove unpaired samples and then arrange by patient and timepoint
 
 This is necessary for paired analyses
 
@@ -99,9 +110,9 @@ for(i in names(ygroup)){
   ygroup[[i]] <- ygroup[[i]][,order(ygroup[[i]]$samples$PATID, ygroup[[i]]$samples$group)]
   print(i)
   print(ifelse(all(gsub('_.*', '', colnames(ygroup[[i]][,grepl("_0", colnames(ygroup[[i]]))])) ==
-               gsub('_.*', '', colnames(ygroup[[i]][,grepl("_25", colnames(ygroup[[i]]))]))) &
-           all(ygroup[[i]]$samples$Timepoint == rep(c(0,25),length(ygroup[[i]]$samples$Timepoint)/2)), 
-         "Samples are paired. All is good.","Stop and check order of samples."))
+                     gsub('_.*', '', colnames(ygroup[[i]][,grepl("_25", colnames(ygroup[[i]]))]))) &
+                 all(ygroup[[i]]$samples$Timepoint == rep(c(0,25),length(ygroup[[i]]$samples$Timepoint)/2)), 
+               "Samples are paired. All is good.","Stop and check order of samples."))
 }
 ```
 
@@ -119,7 +130,7 @@ for(i in names(ygroup)){
 ## Design Matrix - Compare Protected vs Not Protected
 
 Analysis between Protected and Not Protected within a Dose Group.
-Subject as random effect. Batch, study site, CSP-specific IgG pre-immunization, and malaria during vaccination period as fixed effects.
+Subject as random effect using duplicate correlation. Batch, sex, study site, CSP-specific IgG pre-immunization, and malaria during vaccination period as fixed effects.
 Limma voom can handle this. See following:
 
 https://bioconductor.riken.jp/packages/3.9/bioc/vignettes/variancePartition/inst/doc/dream.html
@@ -141,7 +152,7 @@ for(i in names(xgroup)){
   #Define protective outcome-specific PfSPZ Vaccination effects and append them to the design matrix
   Protected.Postvax <- Outcome == "Protected" & Timepoint=="postvax"
   NotProtected.Postvax <- Outcome =="NotProtected" & Timepoint=="postvax"
-  design[[i]] <- model.matrix(~Batch+Site+CSPAb_baseline+MALdVaxTotal)
+  design[[i]] <- model.matrix(~Batch+Sex+Site+CSPAb_baseline+MALdVaxTotal)
   design[[i]] <- cbind(design[[i]], Protected.Postvax, NotProtected.Postvax) #make design matrix according to edgeR 3.5 (p42)
   #https://www.bioconductor.org/packages/release/bioc/vignettes/edgeR/inst/doc/edgeRUsersGuide.pdf
   rownames(design[[i]]) <- xgroup[[i]]$PATID
@@ -171,24 +182,39 @@ for(i in names(xgroup)){
 }
 ```
 
+```{r output Table S3 DEGS, echo=FALSE, eval=FALSE, include=FALSE}
+resdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Tables JCI resubmission/"
+all_delta_degtabs <- list("ΔP" = DeltaProtected$`1.8 x 10^6 PfSPZ`[,c(7,9,2:5,8,10:15)],
+                          "ΔNP" = DeltaNotProtected$`1.8 x 10^6 PfSPZ`[,c(7,9,2:5,8,10:15)],
+                          "ΔP_v_ΔNP" = DeltaDelta$`1.8 x 10^6 PfSPZ`[,c(7,9,2:5,8,10:15)])
+
+writexl::write_xlsx(all_delta_degtabs, paste0(resdir, "Table S3 Delta Post-vax DEGs Revised Adj Batch Sex Site log CSP Ab baseline MALdVaxTotal.xlsx"))
+```
+
 ### Examine top 15 DEGs in 1.8x10^6 PfSPZ dose group
 
 Δ Protected 
 
 ```{r DEG table placebo, echo = FALSE}
-knitr::kable(DeltaProtected$`1.8 x 10^6 PfSPZ`[1:15,c(7,9,2:5,8,10:15)], row.names = FALSE)
+DeltaProtected$`1.8 x 10^6 PfSPZ`[1:15,c(7,9,8,10:15)] %>%
+  mutate_if(is.numeric, signif, digits = 3) %>%
+  knitr::kable(., row.names = FALSE)
 ```
 
 Δ Not Protected
 
 ```{r DEG table low dose, echo = FALSE}
-knitr::kable(DeltaNotProtected$`1.8 x 10^6 PfSPZ`[1:15,c(7,9,2:5,8,10:15)], row.names = FALSE)
+DeltaNotProtected$`1.8 x 10^6 PfSPZ`[1:15,c(7,9,8,10:15)] %>%
+  mutate_if(is.numeric, signif, digits = 3) %>%
+  knitr::kable(., row.names = FALSE)
 ```
 
 Δ Protected vs. Δ Not Protected
 
 ```{r DEG table med dose, echo = FALSE}
-knitr::kable(DeltaDelta$`1.8 x 10^6 PfSPZ`[1:15,c(7,9,2:5,8,10:15)], row.names = FALSE)
+DeltaDelta$`1.8 x 10^6 PfSPZ`[1:15,c(7,9,8,10:15)] %>%
+  mutate_if(is.numeric, signif, digits = 3) %>%
+  knitr::kable(., row.names = FALSE)
 ```
 
 ### Apply GSEA
@@ -238,14 +264,14 @@ for(i in names(ranks)){
       mutate(leadingEdge = gsub("^c\\(|\\)$", "", leadingEdge)) %>%
       mutate(leadingEdge = gsub('"', "", leadingEdge)) %>%
       arrange(padj)
-    closeAllConnections() #this line prevents using up all url connections
+    #closeAllConnections() #this line prevents using up all url connections
     }
 }
 ```
 
 ### Visualize GSEA data as bubble plot
 
-Filter based on padj < 0.05. (Requested by reviewer.)
+Filter based on FDR<5%. 
 
 ```{r plot bubble plot, echo = FALSE}
 GSEAtab_temp <- GSEAtab
@@ -253,7 +279,7 @@ GSEAtab_temp <- GSEAtab
 for(i in c("1.8 x 10^6 PfSPZ")){
   GSEAtab_temp[[i]] <- GSEAtab[[i]] %>%
   bind_rows(., .id = "comparison") %>%
-  mutate(comparison = factor(comparison, levels = c("DeltaP", "DeltaNP", "DeltaDelta"), labels = c("DeltaP", "DeltaNP", "DeltaDelta")))
+  mutate(comparison = factor(comparison, levels = c("DeltaP", "DeltaNP", "DeltaDelta"), labels = c("ΔP", "ΔNP", "ΔP vs ΔNP")))
 }
 plotDat <- GSEAtab_temp$`1.8 x 10^6 PfSPZ` %>%
   #bind_rows(., .id = "treatment")  %>%
@@ -279,8 +305,6 @@ plotDat <- GSEAtab_temp$`1.8 x 10^6 PfSPZ` %>%
   arrange(desc(neglogpadj)) %>% 
   droplevels()
 
-foodat <- plotDat %>%
-  filter(comparison == "DeltaNP")
 #plotting options
 basetextsize <- 9  
 myfont <- "sans"
@@ -304,12 +328,12 @@ MyPlot <- plotDat %>%
 facet_wrap(~module_type, scales = "free_y", ncol = 2)
 ```
 
-### Plot GSEA bubbleplots (Figures 4G of pre-print)
+### Plot GSEA bubbleplots (Figure 4D)
 
-Red: enriched in protected/uninfected through 3 months post-vax surveillance
-Blue: enriched in not protected/infected through 3 months post-vax surveillance
+Red: goes up post-vax relative to baseline
+Blue: goes down post-vax relative to baseline
 
-```{r plot gsea bubbleplot, fig.align='center', fig.width=6, fig.height=4, echo=FALSE, message=FALSE, warning=FALSE}
+```{r plot gsea bubbleplot, fig.align='center', fig.width=7, fig.height=4, echo=FALSE, message=FALSE, warning=FALSE}
 addSmallLegend <- function(myPlot, pointSize = 4, textSize = 6, spaceLegend = 0.6) {
     myPlot +
         guides(shape = guide_legend(override.aes = list(size = pointSize)),
@@ -319,14 +343,16 @@ addSmallLegend <- function(myPlot, pointSize = 4, textSize = 6, spaceLegend = 0.
               legend.position = "right",
               legend.title = element_text(size = textSize), 
               legend.text  = element_text(size = textSize),
-              legend.key.size = unit(spaceLegend, "lines"))
+              legend.key.size = unit(spaceLegend, "lines"),
+              axis.text.x = element_text(angle = 45, vjust = 1, hjust=1, color = "black"),
+              axis.text.y = element_text(color = "black"))
 }
 print(addSmallLegend(MyPlot))
 ```
 
-```{r output to pdf, echo=FALSE, include=FALSE}
+```{r output to pdf, echo=FALSE, include=FALSE, eval=FALSE}
 figdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Figure Panels/"
-cairo_pdf(paste0(figdir, "Figure 4G voom version high-dose PfSPZ FDR5.pdf"), width = 6.5, height = 3.75)
+cairo_pdf(paste0(figdir, "Figure 4D voom version high-dose PfSPZ includes sex adj FDR5.pdf"), width = 6.5, height = 3.75)
 addSmallLegend(MyPlot)
 dev.off()
 ```
@@ -337,14 +363,18 @@ plotDat_4D <- plotDat %>%
 writexl::write_xlsx(plotDat_4D, path = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 4D Delta high-dose PfSPZ GSEA Bubble Plots HighBTMs and MonacoMods.xlsx")
 ```
 
-Gene-level
+### Gene-level analysis
+
 1. Identify genes that were differentially induced in uninfected and infected children receiving 1.8x10^6 PfSPZ Vaccine
+
 2. Merge ΔP vs ΔNP, ΔP, and ΔNP tables.
+
 3. Criteria:
     ΔP vs ΔNP P val < 0.005
     ΔP logFC > 0 and ΔP P val < 0.05
-    
-```{r determine genes of interest, echo=FALSE}
+    ΔNP logFC < 0 and ΔNP P val < 0.10
+
+```{r determine genes of interest, message=FALSE, warning=FALSE}
 AllDegs1 <- bind_rows(DeltaDelta, .id = "Treatment") %>%
   mutate(Comparison = "DeltaDelta")
 AllDegs2 <- bind_rows(DeltaProtected, .id = "Treatment") %>%
@@ -352,37 +382,51 @@ AllDegs2 <- bind_rows(DeltaProtected, .id = "Treatment") %>%
 AllDegs3 <- bind_rows(DeltaNotProtected, .id = "Treatment") %>%
   mutate(Comparison = "DeltaNotProtected")
 AllDegs <- bind_rows(AllDegs1, AllDegs2, AllDegs3) %>%
-  dplyr::select(Treatment, Comparison, EnsemblID, GeneSymbol, descripton_new, logFC, AveExpr, "t", "B", P.Value, adj.P.Val) %>%
+  dplyr::select(Treatment, Comparison, EnsemblID, GeneSymbol, descripton_new, logFC, AveExpr, "t", P.Value, adj.P.Val) %>%
+  dplyr::rename(PValue = P.Value) %>%
+  dplyr::rename(FDR = adj.P.Val) %>%
   dplyr::rename(Description = "descripton_new")
 
-goi <- AllDegs %>%
+gois <- AllDegs %>%
   filter(Treatment == "1.8 x 10^6 PfSPZ") %>%
   droplevels() %>%
-  dplyr::select(Treatment, Comparison, EnsemblID, GeneSymbol, Description, logFC, P.Value, adj.P.Val) %>%
-  pivot_wider(., names_from = Comparison, names_glue = "{Comparison}_{.value}", values_from = c(logFC, P.Value, adj.P.Val)) %>%
-  filter(DeltaDelta_P.Value < 0.001 & (DeltaDelta_logFC > 0 & DeltaProtected_P.Value < 0.05)) %>%
-  arrange(DeltaDelta_P.Value)
+  dplyr::select(Treatment, Comparison, EnsemblID, GeneSymbol, Description, logFC, PValue, FDR) %>%
+  pivot_wider(., names_from = Comparison, names_glue = "{Comparison}_{.value}", values_from = c(logFC, PValue, FDR)) %>%
+  filter((DeltaDelta_PValue < 0.005 & DeltaDelta_logFC > 2) &
+           (DeltaProtected_logFC > 0 & DeltaProtected_PValue < 0.05)) %>%
+  arrange(DeltaDelta_PValue)
 
-goi_ms <- goi %>%
-  dplyr::select(GeneSymbol, DeltaDelta_logFC, DeltaProtected_P.Value, DeltaProtected_logFC, DeltaProtected_P.Value, DeltaNotProtected_logFC, DeltaNotProtected_P.Value)
+gois_ms <- gois %>%
+  dplyr::select(GeneSymbol, DeltaDelta_logFC, DeltaDelta_PValue, DeltaProtected_logFC, DeltaProtected_PValue, DeltaNotProtected_logFC, DeltaNotProtected_PValue)
+```
 
-knitr::kable(goi_ms)
+### Figure 4E (table)
+
+```{r table of goi, message=FALSE, warning=FALSE}
+gois_ms %>%
+  mutate_if(is.numeric, signif,3) %>%
+  knitr::kable()
+```
+
+```{r output Fig 4E table, echo=FALSE, eval=FALSE, include=FALSE}
+plot_dat <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/"
+gois_ms %>%
+  mutate_if(is.numeric, signif,3) %>%
+  writexl::write_xlsx(paste0(plot_dat, "Figure 4E Table Genes Significantly Induced delta P vs delta NP.xlsx"))
 ```
 
 ### Reshape and merge for survival analysis
 
-```{r reshape and merge, echo = FALSE}
+```{r reshape and merge, echo = TRUE, message=FALSE, warning=FALSE}
 library(gtools)
-mySubjects <- unique(c(xgroup$`4.5 x 10^5 PfSPZ`$PATID, xgroup$`9.0 x 10^5 PfSPZ`$PATID, xgroup$`1.8 x 10^6 PfSPZ`$PATID)) #only subjects in PfSPZ Vaccine groups
-
-#local path: "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/PfSPZ Aditi/PfSPZ LDA Analysis/KSPZV1 logCPM expression sets for visualization/PfSPZ_cpm_ExpressionSet_460x23768_allGroups_bothBatches_0_25_for_delta_rmBatchFX_06082021_TMT_logTRUE.rds"
-
 #from google drive
 temp <- tempfile(fileext = ".rds")
 dl <- drive_download(
-  as_id("123ihYx1ykdAvkMq7950yDLPSCTrSH089"), path = temp, overwrite = TRUE)
+  as_id("17xx0YaggLiyWdJc9rqA1nkPSE7dj05p0"), path = temp, overwrite = TRUE)
 cpm_delta <- readRDS(file = dl$local_path)
-
+cpm_delta <- cpm_delta[fData(cpm_delta)$GeneSymbol %in% gois_ms$GeneSymbol, ]
+cpm_delta <- cpm_delta[,cpm_delta$treat != "Placebo"] #remove placebo---we want to just look at all PfSPZ doses
+pData(cpm_delta) <- droplevels(pData(cpm_delta))
 survdat <- Biobase::exprs(cpm_delta) %>%
   as.data.frame() %>%
   rownames_to_column(var = "EnsemblID") %>%
@@ -392,30 +436,30 @@ survdat <- Biobase::exprs(cpm_delta) %>%
   dplyr::select(-c(EnsemblID)) %>%
   dplyr::select(GeneSymbol, everything()) %>%
   pivot_longer(2:ncol(.), names_to = "PATID", values_to = "expression") %>%
-  mutate(PATID = gsub("_0", "", PATID)) %>%
-  dplyr::filter(PATID %in% mySubjects) %>%
   group_by(GeneSymbol) %>%
   mutate(exprs_up_down = factor(ifelse(expression>log2(1), "induced", "not induced"), levels = c("not induced", "induced"))) %>%
+  mutate(exprs_terciles = factor(quantcut(expression, q=3, na.rm=TRUE), labels = c("bottom_tercile", "middle_tercile", "top_tercile"))) %>%
+  mutate(exprs_median = factor(quantcut(expression, q=2, na.rm=TRUE), labels = c("bottom", "top"))) %>%
   left_join(., fData(cpm_delta) %>%
               dplyr::select(c(GeneSymbol, description)), by = "GeneSymbol") %>%
   left_join(., pData(cpm_delta)%>%
-              dplyr::select(c(SAMPLEID, PATID, Timepoint, treat, site, SEX, age.vax1, mal.dvax, mal.dvax.tot, contains("atp"))), by = "PATID")
+              dplyr::select(c(PATID, Timepoint, treat, site, SEX, pfcsp_pre, age.vax1, mal.vax.1, mal.dvax, mal.dvax.tot, contains("atp"))), by = "PATID") %>%
+  droplevels()
+survdat$tte.mal.atp.6 <- survdat$tte.mal.atp.6+1
+survdat[is.na(survdat$pfcsp_pre),]$pfcsp_pre <- median(survdat$pfcsp_pre, na.rm = TRUE) #Impute 2 missing values with median of all samples
 ```
 
-## KM plots
+### Kaplan-Meier plots
 
-```{r km plots, echo = FALSE, fig.align='center', fig.height=6, fig.width=6}
-library(survminer)
+```{r km plots, echo=TRUE, message=FALSE, warning=FALSE}
 library(survival)
+library(survminer)
 myFollowup <- 6 #3 or 6
 N <- length(unique(survdat$PATID))
-
-survdat.filtered <- fit <- diff <- mySurvPlot <- c()
-survdat <- survdat %>%
-  filter(tte.mal.atp.6 > 0)
-for(i in goi_ms$GeneSymbol){
+survdat.filtered <- fit <- mySurvPlot <- c()
+for(i in gois_ms$GeneSymbol){
   survdat.filtered[[i]] <- survdat %>%
-    filter(GeneSymbol == i) 
+    filter(GeneSymbol == i)
   fit[[i]] <- survfit(Surv(tte.mal.atp.6, mal.atp.6) ~ exprs_up_down, data= survdat.filtered[[i]])
   mySurvPlot[[i]] <- ggsurvplot(fit[[i]], risk.table = TRUE, pval = TRUE,
                                 break.time.by = 30, title = unique(survdat.filtered[[i]]$GeneSymbol),
@@ -426,22 +470,91 @@ for(i in goi_ms$GeneSymbol){
                                 conf.int = TRUE,
                                 conf.int.alpha = 0.1,
                                 font.family = "Arial")
-  print(mySurvPlot[[i]]$plot)
+}
+```
+
+
+```{r print km plots, fig.align='center', fig.height = 5, fig.width = 6, echo = FALSE, eval = FALSE, include=FALSE}
+for(i in gois_ms$GeneSymbol){
+  plot.new()
+  print(mySurvPlot[[i]], newpage = FALSE)
+}
+```
+
+```{r print invidividual plots, echo=FALSE, eval=FALSE}
+# figdir <- "/Volumes/GoogleDrive/My Drive/Manuscripts/KSPZV1 Manuscript/Med Revised Submission 2022/Figures/"
+# cairo_pdf(filename = paste0(figdir,"KSPZV1 Fig 4I Delta KM FSTL4 Revision.pdf"), width = 5.5, height = 5.5)
+# print(mySurvPlot$FSTL4)
+# dev.off()
+```
+
+### Kaplan-Meier plot for *FSTL4* (Figure 4F)
+
+```{r km plot 1, echo = TRUE, fig.align='center', fig.height=6, fig.width=6}
+print(mySurvPlot$FSTL4, newpage = FALSE)
+```
+
+```{r save km plot data, include=FALSE, eval=FALSE, echo=FALSE}
+plot_dat <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/"
+writexl::write_xlsx(list("FSTL4_KM_plot_dat" = mySurvPlot$FSTL4$data.survplot,
+                         "FSTL4_surv_tab_dat" = mySurvPlot$FSTL4$data.survtable),
+                    path = paste0(plot_dat, "Figure 4F FSTL4 Survplot Data.xlsx"))
+```
+
+### Cox Regression (Table S4)
+
+```{r do cox regression to separate dose groups, echo=TRUE, message=FALSE, warning=FALSE}
+cox.res <- c()
+for(i in names(survdat.filtered)){
+  survdat.cp <- survdat.filtered[[i]]
+  survdat.cp$tte.mal.atp.6 <- survdat.cp$tte.mal.atp.6 + 1 #add one day to each value given zero values
+  survdat.cp$start		<-		0
+  survdat.cp$stop		<-		survdat.cp$tte.mal.atp.6
+  subj.pcrp <- rep(survdat.cp$start, as.vector(table(survdat.cp$PATID)))
+  survdat.cp$start1 <- survdat.cp$start-subj.pcrp
+  survdat.cp$stop1 <- survdat.cp$stop-subj.pcrp
+  survdat.cp <- survdat.cp %>%
+    droplevels()
+  fit <- coxph(Surv(start1, stop1, mal.atp.6) ~ exprs_up_down + factor(SEX) + factor(site) + log10(pfcsp_pre+1) + mal.dvax.tot + factor(treat), data = survdat.cp)
+  #vfit <- cox.zph(fit)
+  #par(mfrow=c(3,2))
+  #plot(vfit)
+  #cox.zph(fit)
+  cox.res[[i]] <- as.data.frame(cbind(fit$n, fit$nevent, summary(fit)$conf.int[,c(1,3:4)], summary(fit)$coefficient[,5]))
+  colnames(cox.res[[i]]) <- c("n","number of events","HR", "LCI", "UCI", "P value")
+  cox.res[[i]] <- cox.res[[i]] %>%
+    as.matrix() %>%
+    signif(., digits = 3) %>%
+    as.data.frame()
+  cox.res[[i]]$Gene <- i
+  rownames(cox.res[[i]]) <- c("upregulated post-vax (ref:downregulated post-vax)",
+                              "gender (ref:female)",
+                              "Wagai (ref:Siaya)",
+                              "CSP-specific IgG baseline",
+                              "number of Pf infections during vaccination period",
+                              "9.0x10^5 PfSPZ (ref:4.5x10^5 PfSPZ)",
+                              "1.8x10^6 PfSPZ (ref:4.5x10^5 PfSPZ)")
+  cox.res[[i]] <- cox.res[[i]] %>%
+    rownames_to_column(var = "Covariate") %>%
+    dplyr::select(Gene, everything())
   }
+  cox.res.bound <- bind_rows(cox.res, .id = "Gene") %>%
+    mutate(Significant = ifelse(`P value`<0.001, "***",
+                              ifelse(`P value`<0.01, "**",
+                                     ifelse(`P value`<0.05, "*", ""))))
 ```
 
-```{r km plot 1, echo = FALSE, fig.align='center', fig.height=6, fig.width=6}
-print(mySurvPlot$`RP11-440L14.1`$plot)
+Only display FSTL4 here.
+
+```{r show table, echo=TRUE}
+cox.res.bound %>%
+  filter(Gene == "FSTL4") %>%
+  knitr::kable()
 ```
 
-```{r km plot 2, echo = FALSE, fig.align='center', fig.height=6, fig.width=6}
-print(mySurvPlot$`CTD-3234P18.2`$plot)
+
+```{r write table to file, echo=FALSE, eval=FALSE, include=FALSE}
+cox.res.bound %>%
+  writexl::write_xlsx(., paste0(resdir, "Table S4 Cox PH for FSTL4 n169 postvax 6 mos adj Batch Sex Site CSPAb MALdVAXTotal revised.xlsx"))
 ```
 
-```{r km plot 3, echo = FALSE, fig.align='center', fig.height=6, fig.width=6}
-print(mySurvPlot$MED28$plot)
-```
-
-```{r save data, echo=FALSE}
-save(xgroup, ygroup, degtabs, GSEAtab, AllDegs, survdat, mySurvPlot, goi, file = paste0("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/PfSPZ_R_Results/KSPZV1 DGE Delta Postvax limm voom results/", "KSPZV1-DGE-Delta-Postvax-voom-", Sys.Date(),".RData"))
-```
