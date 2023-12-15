@@ -23,7 +23,7 @@ Code for systems analysis of KSPZV1 malaria vaccine trial.
 
 [Figures 2A, 2B, 2C. WGCNA, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-WGCNA-Baseline-JCI-revision.html) 
 
-[WGCNA, Δ (post-vax/baseline)](https://tranlab.github.io/kspzv1-systems-analysis/html/KSPZV1-WGCNA-Delta-Postvax.html)
+[Figures 4B, 4C, S6A, S6B, WGCNA, Δ (post-vax/baseline)](https://tranlab.github.io/kspzv1-systems/html/KSPZV1-WGCNA-Delta-Postvax-JCI-revision.html)
 
 ## Machine learning (class prediction)
 
