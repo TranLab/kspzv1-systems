@@ -31,11 +31,19 @@ Code for systems analysis of KSPZV1 malaria vaccine trial.
 
 [Figures 6B, S7A, XGBoost, 1.8x10^6 PfSPZ, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KPSZV1-Baseline-Highdose-PfSPZ-Multimodal-ML-Revised-TMT-plot-ROC-SHAP-from-CV-data-JCI-Revision.html) 
 
+[ML code to run XGBoost models using 1.8x10^6 PfSPZ, pre-immunization baseline features (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KPSZV1-Baseline-Highdose-PfSPZ-Multimodal-ML-xgb-nested-fs-cv-on-full-set-JCI-Revision.html) 
+
 [Figures 6C, S7B, XGBoost, 1.8x10^6 PfSPZ, post-vaccination (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KPSZV1-Postvax-Highdose-PfSPZ-Multimodal-ML-plot-ROC-SHAP-from-CV-data-JCI-Revision.html) 
+
+[ML code to run XGBoost models using 1.8x10^6 PfSPZ, post-vaccination features (REVISED)](https://tranlab.github.io/kspzv1-systems/html/Postvax-Highdose-PfSPZ-Multimodal-ML-xgb-nested-fs-cv-on-full-set-JCI-Revision.html) 
 
 [Figures 6D, S7C, XGBoost, 1.8x10^6 PfSPZ, delta (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KPSZV1-Delta-Highdose-PfSPZ-Multimodal-ML-plot-ROC-SHAP-from-CV-data-JCI-Revision.html) 
 
+[ML code to run XGBoost models using 1.8x10^6 PfSPZ, delta features (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KPSZV1-Delta-Highdose-PfSPZ-Multimodal-ML-xgb-nested-fs-cv-on-full-set-JCI-Revision.html) 
+
 [Figures 6E, S7D, XGBoost, Placebo, pre-immunization baseline (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KPSZV1-Baseline-Placebo-Multimodal-ML-Revised-TMT-plot-ROC-SHAP-from-CV-data-JCI-Revision.html) 
+
+[ML code to run XGBoost models using Placebo, pre-immunization baseline features (REVISED)](https://tranlab.github.io/kspzv1-systems/html/KPSZV1-Baseline-Placebo-multimodal-ML-xgb-nested-fs-cv-on-full-set-JCI-Revision.html) 
 
 ## Integrated, multi-modal correlations and network plots
 

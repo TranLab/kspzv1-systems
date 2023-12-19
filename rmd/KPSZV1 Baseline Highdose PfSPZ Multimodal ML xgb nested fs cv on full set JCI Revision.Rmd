@@ -1,10 +1,10 @@
 ---
-title: "KSPZV1 baseline 1.8x10^6 PfSPZ multimodal ML revised - xgboost nested feature selection and cv FULL DATASET"
+title: "KSPZV1 baseline 1.8x10^6 PfSPZ multimodal ML revised - xgboost nested feature selection and cv on full dataset"
 author: "Tuan M. Tran"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
   html_document :
-    theme: united
+    theme: cerulean
 ---
 
 ```{r setup, include=FALSE}
@@ -37,7 +37,7 @@ Performing training and cross-validation on full dataset
 Notes: This can be run in 500 run chunks and with each chunk saved if memory is an issue. Results can later be concatenated.
 If using R studio, run code directly in console for better performance.
 
-```{r libraries, include=FALSE}
+```{r libraries, include=TRUE, echo=TRUE, eval=FALSE}
 library(openxlsx)
 library(xgboost)
 library(dplyr)
@@ -55,15 +55,16 @@ library(Biobase)
 library(doMC)
 library(randomForest)
 library(data.table)
+library(googledrive)
 ```
 
-```{r set local paths}
+```{r set local paths, include=FALSE, echo=FALSE, eval=FALSE}
 datadir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/kspzv1-systems-analysis/"
 datadir2 <- "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/"
 plotdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/"
 ```
 
-```{r read in full dataset}
+```{r read in full dataset, include=FALSE, echo=FALSE, eval=FALSE}
 complete_baseline_eset <- read_rds(paste0(datadir, "KSPZV1 logCPM expression sets for visualization/PfSPZ_cpm_ExpressionSet_244x21815_AllGroups_bothBatches_0_rmBatchFX_06082021_TMT_logTRUE.rds"))
 #high_dose_features <- read_rds(paste0(datadir,"Leetah ML code/kspzv1_hidose_imputed_ml_datasetfull_042123.RDS")) #original data from Leetah
 high_dose_features <- read_rds(paste0(datadir2,"highdose_PfSPZ_baseline_correlation_ML_data_with_missing.rds")) #dataset derived from my own code
@@ -71,9 +72,9 @@ high_dose_baseline_eset <- complete_baseline_eset[,which(complete_baseline_eset$
 colnames(high_dose_baseline_eset) <- gsub("_0", "", colnames(high_dose_baseline_eset))
 ```
 
+```{r impute missing, include=FALSE, echo=FALSE, eval=FALSE}
 ### Scale and impute missing data in high-dose features
 
-```{r impute missing, eval=FALSE, include=FALSE}
 library(missMDA)
 library(FactoMineR)
 #scale data first since we are using PCA to impute the data
@@ -83,7 +84,7 @@ high_dose_features <- high_dose_features_scaled_imputed$res.imputePCA
 high_dose_features <- t(high_dose_features)
 ```
 
-```{r make highdose features, eval=FALSE, echo=FALSE, include=FALSE}
+```{r make highdose features, include=FALSE, echo=FALSE, eval=FALSE}
 ##before splitting, we want to join the classification variable and additional variables of interest to the features data
 high_dose_features_class <- t(high_dose_features) %>%
   data.frame(check.names=FALSE) %>%
@@ -112,17 +113,24 @@ if(all(rownames(high_dose_features_class) == colnames(high_dose_baseline_eset)))
 # write_rds(t(high_dose_features), file = paste0(datadir2, "high_dose_baseline_features_only_scaled_imputed.rds"))
 ```
 
-```{r read high dose baseline features}
+```{r read high dose baseline features local, eval=FALSE, echo=FALSE, include=FALSE}
 high_dose_features_class <- read_rds(file = paste0(datadir2, "high_dose_baseline_class_features_scaled_imputed.rds"))
+```
+
+```{r read high dose baseline features googledrive, eval=FALSE, echo=TRUE, include=TRUE}
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1QXCOZfeSizhJd53NDbnMU28xO14q1d2G"), path = temp, overwrite = TRUE)
+high_dose_features_class <- readRDS(file = dl$local_path)
 ```
 
 ### Select options
 
-```{r select options}
+```{r select options, include=TRUE, echo=TRUE, eval=FALSE}
 train_on_split_or_full_set <- "full" #options: original_split, split, full
 ```
 
-```{r split test and train}
+```{r split test and train, include=TRUE, echo=TRUE, eval=FALSE}
 myseed <- sample(1:5000,1)
 set.seed(myseed) #set seed for reproducibility
   print(paste0("Will train and cross-validate with nested feature selection on full high dose PfSPZ dataset which consists of ", ncol(high_dose_baseline_eset), " samples and ", ncol(high_dose_features_class), " features."))
@@ -130,7 +138,7 @@ set.seed(myseed) #set seed for reproducibility
 
 ## Use xgboost for both feature selection and training model. Use caret and pROC for cross-validation.
 
-```{r use mlr3 package set parameters and resampling strategy, message=FALSE}
+```{r use mlr3 package set parameters and resampling strategy, message=FALSE, include=TRUE, echo=TRUE, eval=FALSE}
 library(mlr)
 library(mlr3)
 #https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
@@ -163,7 +171,7 @@ rdesc <- makeResampleDesc(method = "CV",
                           stratify = T)
 ```
 
-```{r hyperparameter tuning to select best features loop set up and options}
+```{r hyperparameter tuning to select best features loop set up and options, include=TRUE, echo=TRUE, eval=FALSE}
 #set parallel backend.  
 library(parallel)
 library(parallelMap)
@@ -180,9 +188,8 @@ ctrl <- makeTuneControlRandom(maxit = maxiterations)
  
 The following code sources a custom function ("kspzv1 xgboost manual train and cv function.R") to run feature selection and cross validation x times for every fold of cross-validation.
 
-
-```{r source function and make fold objects}
-source("~/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/kspzv1-systems-analysis/kspzv1 xgboost manual train and cv function.R")
+```{r source function and make fold objects, include=TRUE, echo=TRUE, eval=FALSE}
+source("https://raw.githubusercontent.com/TranLab/kspzv1-systems/main/kspzv1%20xgboost%20manual%20train%20and%20cv%20function.R")
 fold1 <- fold2 <- fold3 <- fold4 <- c()
 ```
 
@@ -191,9 +198,9 @@ load(paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Man
             "full_high_dose_4fold_cv_2250_runs/all_folds_data_seed_741_runs_2250_19_Aug_2023_full.RData"))
 ```
 
-```{r run fs and cv loop}
+```{r run fs and cv loop, include=TRUE, echo=TRUE, eval=FALSE}
 tic(msg = paste0("total for ", runs, " total runs"))
-for(i in 1502:runs){
+for(i in 1:runs){
   run_seed <- sample(1:1e4,1)
   # Splitting data in training and validation sets
   set.seed(run_seed) #set seed for run
@@ -293,14 +300,14 @@ for(i in 1502:runs){
   toc()
   }
 toc()
-#```
+```
 
-#```{r load all folds data from local}
-#load(paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
-#            "full_high_dose_baseline_4fold_cv_10_rns/all_folds_data_seed_1943_runs_2500_19_Aug_2023_full.RData"))
-#```
+```{r load all folds data from local, include=FALSE, echo=FALSE, eval=FALSE}
+load(paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+           "full_high_dose_baseline_4fold_cv_10_rns/all_folds_data_seed_1943_runs_2500_19_Aug_2023_full.RData"))
+```
 
-#```{r combine results from all folds}
+```{r combine results from all folds, include=TRUE, echo=TRUE, eval=FALSE}
 validation_res_list <- c()
 for(i in 1:length(fold4)){
   validation_res_list[[i]] <- bind_rows(fold1[[i]]$validation_results %>%
@@ -327,9 +334,9 @@ validation_summarized_res_df <- validation_res_df %>%
             mean_cv_accuracy = mean(Accuracy),
             sd_cv_accuracy = sd(Accuracy)) %>%
   arrange(desc(mean_cv_AUC))
-#```
+```
 
-#```{r save results of crossvalidation}
+```{r save results of crossvalidation, include=FALSE, echo=FALSE, eval=FALSE}
 save(fold1, fold2, fold3, fold4,
        file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
                      "full_high_dose_baseline_4fold_cv_", length(fold4), "_runs/",

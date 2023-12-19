@@ -1,10 +1,10 @@
 ---
-title: "KSPZV1 baseline placebo multimodal ML revised - xgboost nested feature selection and cv FULL DATASET"
+title: "KSPZV1 baseline placebo multimodal ML revised - xgboost nested feature selection and cv on full dataset"
 author: "Tuan M. Tran"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
   html_document :
-    theme: united
+    theme: cerulean
 ---
 
 ```{r setup, include=FALSE}
@@ -39,7 +39,7 @@ Notes:
 This can be run in 500 run chunks and with each chunk saved if memory is an issue. Results can later be concatenated.
 If using R studio, run code directly in console for better performance.
 
-```{r libraries, include=FALSE}
+```{r libraries, message=FALSE, include=TRUE, echo=TRUE, eval=FALSE}
 library(openxlsx)
 library(xgboost)
 library(dplyr)
@@ -57,15 +57,16 @@ library(Biobase)
 library(doMC)
 library(randomForest)
 library(data.table)
+library(googledrive)
 ```
 
-```{r set local paths}
+```{r set local paths, include=FALSE, echo=FALSE, eval=FALSE}
 datadir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/kspzv1-systems-analysis/"
 datadir2 <- "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/"
 plotdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/"
 ```
 
-```{r read in full dataset}
+```{r read in full dataset, include=FALSE, echo=FALSE, eval=FALSE}
 complete_baseline_eset <- read_rds(paste0(datadir, "KSPZV1 logCPM expression sets for visualization/PfSPZ_cpm_ExpressionSet_244x21815_AllGroups_bothBatches_0_rmBatchFX_06082021_TMT_logTRUE.rds"))
 #placebo_features <- read_rds(paste0(datadir,"Leetah ML code/kspzv1_placebo_imputed_ml_datasetfull_042123.RDS"))#original data from Leetah
 placebo_features <- read_rds(paste0(datadir2,"placebo_PfSPZ_baseline_correlation_ML_data_with_missing.rds")) #dataset derived from my own code
@@ -74,9 +75,9 @@ colnames(placebo_baseline_eset) <- gsub("_0", "", colnames(placebo_baseline_eset
 rm(complete_baseline_eset)
 ```
 
+```{r impute missing, include=FALSE, echo=FALSE, eval=FALSE}
 ### Scale and impute missing data in high-dose features
 
-```{r impute missing, eval=FALSE, include=FALSE}
 library(missMDA)
 library(FactoMineR)
 #scale data first since we are using PCA to impute the data
@@ -86,7 +87,7 @@ placebo_features <- placebo_features_scaled_imputed$res.imputePCA
 placebo_features <- t(placebo_features)
 ```
 
-```{r make placebo features, eval=FALSE, echo=FALSE, include=FALSE}
+```{r make placebo features, include=FALSE, echo=FALSE, eval=FALSE}
 ##before splitting, we want to join the classification variable and additional variables of interest to the features data
 placebo_features_class <- t(placebo_features) %>%
   data.frame(check.names=FALSE) %>%
@@ -115,17 +116,24 @@ if(all(rownames(placebo_features_class) == colnames(placebo_baseline_eset))){
 #write_rds(t(placebo_features), file = paste0(datadir2, "placebo_baseline_features_only_scaled_imputed.rds"))
 ```
 
-```{r read high dose baseline features}
+```{r read placebo baseline features local, include=FALSE, echo=FALSE, eval=FALSE}
 placebo_features_class <- read_rds(file = paste0(datadir2, "placebo_baseline_class_features_scaled_imputed.rds"))
+```
+
+```{r read placebo baseline features googledrive, include=TRUE, echo=TRUE, eval=FALSE}
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1QXNOms5dHbJtjV8HRRzGpjY4ErjghDPi"), path = temp, overwrite = TRUE)
+placebo_features_class <- readRDS(file = dl$local_path)
 ```
 
 ### Select options
 
-```{r select options}
+```{r select options, include=TRUE, echo=TRUE, eval=FALSE}
 train_on_split_or_full_set <- "full" #options: original_split, split, full
 ```
 
-```{r split test and train}
+```{r split test and train, include=TRUE, echo=TRUE, eval=FALSE}
 myseed <- sample(1:5000,1)
 set.seed(myseed) #set seed for reproducibility
   print(paste0("Will train and cross-validate with nested feature selection on full placebo PfSPZ dataset which consists of ", ncol(placebo_baseline_eset), " samples and ", ncol(placebo_features_class), " features."))
@@ -133,7 +141,7 @@ set.seed(myseed) #set seed for reproducibility
 
 ## Use xgboost for both feature selection and training model. Use caret and pROC for cross-validation.
 
-```{r use mlr3 package set parameters and resampling strategy, message=FALSE}
+```{r use mlr3 package set parameters and resampling strategy, message=FALSE, include=TRUE, echo=TRUE, eval=FALSE}
 library(mlr)
 library(mlr3)
 #https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
@@ -166,7 +174,7 @@ rdesc <- makeResampleDesc(method = "CV",
                           stratify = T)
 ```
 
-```{r hyperparameter tuning to select best features loop set up and options}
+```{r hyperparameter tuning to select best features loop set up and options, include=TRUE, echo=TRUE, eval=FALSE}
 #set parallel backend.  
 library(parallel)
 library(parallelMap)
@@ -183,17 +191,17 @@ ctrl <- makeTuneControlRandom(maxit = maxiterations)
  
 The following code sources a custom function ("kspzv1 xgboost manual train and cv function.R") to run feature selection and cross validation x times for every fold of cross-validation.
 
-
-```{r source function and make fold objects}
-source("~/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/kspzv1-systems-analysis/kspzv1 xgboost manual train and cv function.R")
-
+```{r source function and make fold objects, include=TRUE, echo=TRUE, eval=FALSE}
+source("https://raw.githubusercontent.com/TranLab/kspzv1-systems/main/kspzv1%20xgboost%20manual%20train%20and%20cv%20function.R")
 fold1 <- fold2 <- fold3 <- fold4 <- c()
-#if starting from prior session
+```
+
+```{r if starting from prior session, include=FALSE, echo=FALSE, eval=FALSE}
 load(paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
             "full_placebo_baseline_4fold_cv_1000_runs/all_folds_data_seed_4917_runs_1000_15_Oct_2023_full.RData"))
 ```
 
-```{r run fs and cv loop}
+```{r run fs and cv loop, include=TRUE, echo=TRUE, eval=FALSE}
 tic(msg = paste0("total for ", runs, " total runs"))
 for(i in 1001:runs){
   run_seed <- sample(1:1e4,1)
@@ -295,14 +303,14 @@ for(i in 1001:runs){
   toc()
   }
 toc()
-#```
+```
 
-#```{r load all folds data from local}
-#load(paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
-#            "full_placebo_4fold_cv_500_runs/all_folds_data_seed_1943_runs_500_19_Aug_2023_full.RData"))
-#```
+```{r load all folds data from local, include=FALSE, echo=FALSE, eval=FALSE}
+load(paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+            "full_placebo_4fold_cv_500_runs/all_folds_data_seed_1943_runs_500_19_Aug_2023_full.RData"))
+```
 
-#```{r combine results from all folds}
+```{r combine results from all folds, include=TRUE, echo=TRUE, eval=FALSE}
 validation_res_list <- c()
 for(i in 1:length(fold4)){
   validation_res_list[[i]] <- bind_rows(fold1[[i]]$validation_results %>%
@@ -329,10 +337,10 @@ validation_summarized_res_df <- validation_res_df %>%
             mean_cv_accuracy = mean(Accuracy),
             sd_cv_accuracy = sd(Accuracy)) %>%
   arrange(desc(mean_cv_AUC))
-#```
+```
 
 
-#```{r save results of crossvalidation}
+```{r save results of crossvalidation, include=FALSE, echo=FALSE, eval=FALSE}
 save(fold1, fold2, fold3, fold4,
        file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
                      "full_placebo_baseline_4fold_cv_", length(fold4), "_runs/",
@@ -350,7 +358,6 @@ writexl::write_xlsx(validation_summarized_res_df,
                                              "full_placebo_baseline_4fold_cv_", length(fold4), "_runs/",
                                              "cv_summarized_res_all_folds_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
                                              gsub("\\:","-", format(Sys.Date(),"%d_%b_%Y")), "_", train_on_split_or_full_set, ".xlsx"))
-
 validation_summarized_res_df %>%
   ungroup() %>%
   dplyr::arrange(desc(mean_cv_accuracy)) %>%

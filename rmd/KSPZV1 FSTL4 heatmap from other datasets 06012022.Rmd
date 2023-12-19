@@ -28,78 +28,87 @@ The datasets used here include
 
 3.RNA Schmiedel blood cell gene data (avaialble for download at https://www.proteinatlas.org/about/download, Accession number:  phs001703.v1.p1.)
 
-#Step 1: Import bulk RNA-seq datasets
+### Step 1: Import bulk RNA-seq datasets
+
 ```{r import RNA-seq datasets downloaded from Protein Atlas onto Google Drive,  message=FALSE, warning=FALSE}
 #HPA_Blood
 temp <- tempfile(fileext = ".tsv")
 dl <- drive_download(
-  as_id("1-NhBNSH5iE8ZbnZjlq5M8yCj1x4o5sK7"), path = temp, overwrite = TRUE)
+  as_id("1VczZG41RgnABNtizazMfFYJtdm7s019Q"), path = temp, overwrite = TRUE)
 hpa_blood <- read.table(file = dl$local_path, sep = '\t', header = TRUE, check.names = F)
 
 # Monaco
 temp <- tempfile(fileext = ".tsv")
 dl <- drive_download(
-  as_id("1-KVniCQuQnxSsw78MhyHGMT1zdIvUIf3"), path = temp, overwrite = TRUE)
+  as_id("1Vgwe6m8jekSpFkPJ1uGuzZzXrkxxNpwk"), path = temp, overwrite = TRUE)
 monaco <- read.table(file = dl$local_path, sep = '\t', header = TRUE, check.names = F)
 
 # Schmiedel
 temp <- tempfile(fileext = ".tsv")
 dl <- drive_download(
-  as_id("1-KM25oR5mCubweOHzO80_Ul8rMIHeJuC"), path = temp, overwrite = TRUE)
+  as_id("1VmXbKuigBg9Y7EkIcYBvPZGMQskQM1Ke"), path = temp, overwrite = TRUE)
 schmiedel <- read.table(file = dl$local_path, sep = '\t', header = TRUE, check.names = F)
 ```
 
-#Step 2: Keep only gene(s) of interest (FSTL4) from each of the three bulk RNA-seq datasets
+### Step 2: Keep only gene(s) of interest (FSTL4) from each of the three bulk RNA-seq datasets
 
 ```{r filter bulk RNAseq datasets for FSTL4,  message=FALSE, warning=FALSE}
 #HPA_blood
-hpa_blood<-hpa_blood%>%rename("Gene_name"="Gene name")%>%filter(Gene_name %in% "FSTL4")
-hpa_blood<-hpa_blood[,c(2,3,5)]
+hpa_blood <- hpa_blood %>% 
+  dplyr::rename(Gene_name = "Gene name") %>% 
+  filter(Gene_name %in% "FSTL4") %>%
+  dplyr::select(c(2,3,5))
 
 #Schmiedel
-schmiedel<-schmiedel%>%rename("Gene_name"="Gene name")%>%filter(Gene_name %in% "FSTL4")
-schmiedel<-schmiedel[,c(2,3,4)]
+
+schmiedel <- schmiedel %>% 
+  dplyr::rename(Gene_name = "Gene name") %>% 
+  filter(Gene_name %in% "FSTL4") %>%
+  dplyr::select(c(2,3,4))
 
 #Monaco
-monaco<-monaco%>%rename("Gene_name"="Gene name")%>%filter(Gene_name %in% "FSTL4")
-monaco<-monaco[,c(2,3,5)]
+monaco <- monaco %>% 
+  dplyr::rename(Gene_name = "Gene name") %>% 
+  filter(Gene_name %in% "FSTL4") %>%
+  dplyr::select(c(2,3,5))
 ```
 
-# Step 5: Harmonize blood cell names in the datasets to merge them accurately
+### Step 5: Harmonize blood cell names in the datasets to merge them accurately
 
 ```{r change names to harmonize datasets,  message=FALSE, warning=FALSE}
 #HPA
-hpa_blood<-hpa_blood[-c(3,19),]
-hpa_blood$`Blood cell`<-as.character(hpa_blood$`Blood cell`)
+#hpa_blood <- hpa_blood[-c(3,19),]
 hpa_blood[hpa_blood=="memory CD4 T-cell"]<-"Memory CD4 T-cell Th1"
 hpa_blood[hpa_blood=="memory CD8 T-cell"]<-"Central memory CD8 T-cell"
 
 #Monaco
-monaco<-monaco[-c(24,27, 28,29),]
+#monaco <- monaco[-c(24,27, 28,29),]
 
 #Schmiedel
-schmiedel<-schmiedel[-c(7, 10, 12), ]
-schmiedel$`Blood cell`<-as.character(schmiedel$`Blood cell`)
-schmiedel[schmiedel=="Naive T-reg"]<-"T-reg"
+#schmiedel <- schmiedel[-c(7, 10, 12), ]
+schmiedel[schmiedel=="Naive T-reg"] <- "T-reg"
 ```
 
-# Step 6: Merge the datasets together
+### Step 6: Merge the datasets together
+
 ```{r merge datasets,  message=FALSE, warning=FALSE}
-a<-merge(monaco, hpa_blood, by="Blood cell", all=T, suffixes = c("_Monaco", "_HPA"))
-a<-a[, -c(2,4)]
-b<-merge(a,schmiedel, by="Blood cell", all =T, suffixes = c("", "schmiedel"))
-b<-b%>%dplyr::rename(., "Schmiedel"= "TPM")
-b<-b[,-4]
+a <- merge(monaco, hpa_blood, by="Immune cell", all=T, suffixes = c("_Monaco", "_HPA"))
+a <- a[, -c(2,4)]
+b <- merge(a,schmiedel, by="Immune cell", all =T, suffixes = c("", "schmiedel"))
+b <- b %>%
+  dplyr::rename(., "Schmiedel"= "TPM")
+b <- b[,-4]
 ```
 
 # Step 7: Arrange the blood cells in the order they will be shown in the heatmap and modify names
 
 ```{r final clean up,  message=FALSE, warning=FALSE}
-alldat<-b %>% arrange(factor(`Blood cell`, levels = c("basophil", "neutrophil","classical monocyte","intermediate monocyte",  "non-classical monocyte", "NK-cell", "myeloid DC", "plasmacytoid DC", "MAIT T-cell", "B cell progenitor", "naive B-cell", "Non-switched memory B-cell", "Switched memory B-cell", "Exhausted memory B-cell", "Plasmablast", "naive CD4 T-cell", "Memory CD4 T-cell TFH", "Memory CD4 T-cell Th1", "Memory CD4 T-cell Th1/Th17", "Memory CD4 T-cell Th17", "Memory CD4 T-cell Th2", "naive CD8 T-cell", "Central memory CD8 T-cell", "Effector memory CD8 T-cell", "T-reg", "Vd2 gdTCR", "Non-Vd2 gdTCR")))
-alldat<-alldat[-c(27:28),]
+alldat <-b %>%
+  arrange(factor(`Immune cell`, levels = c("basophil", "neutrophil","classical monocyte","intermediate monocyte",  "non-classical monocyte", "NK-cell", "myeloid DC", "plasmacytoid DC", "MAIT T-cell", "B cell progenitor", "naive B-cell", "Non-switched memory B-cell", "Switched memory B-cell", "Exhausted memory B-cell", "Plasmablast", "naive CD4 T-cell", "Memory CD4 T-cell TFH", "Memory CD4 T-cell Th1", "Memory CD4 T-cell Th1/Th17", "Memory CD4 T-cell Th17", "Memory CD4 T-cell Th2", "naive CD8 T-cell", "Central memory CD8 T-cell", "Effector memory CD8 T-cell", "T-reg", "Vd2 gdTCR", "Non-Vd2 gdTCR")))
+alldat <- alldat[-c(27:28),]
 
 #Rename the cell types
-alldat$`Blood cell`<-as.character(alldat$`Blood cell`)
+alldat$`Immune cell`<-as.character(alldat$`Immune cell`)
 alldat[alldat == "basophil"]<-"Basophil"
 alldat[alldat == "neutrophil"]<-"Neutrophil"
 alldat[alldat == "classical monocyte"]<-"Classical monocyte"
@@ -129,8 +138,8 @@ alldat[alldat == "Vd2 gdTCR"]<-"Vδ2 γδTCR"
 alldat[alldat == "Non-Vd2 gdTCR"]<-"Non-δ2 γδTCR"
 
 # create rownames 
-row.names(alldat)<-alldat[,1]
-alldat<-alldat[,-1]
+row.names(alldat) <- alldat[,1]
+alldat <- alldat[,-1]
 
 # Rename the columns
 alldat<-alldat %>% 
@@ -142,7 +151,7 @@ alldat<-alldat %>%
 alldat <- alldat[, c(2, 3, 1)]
 ```
 
-# Step 8: Make the heatmap (Figure 4J in preprint)
+# Step 8: Make the heatmap (Figure 4J)
 
 ```{r make heatmaps,  message=FALSE, warning=FALSE}
 # Scale the data
