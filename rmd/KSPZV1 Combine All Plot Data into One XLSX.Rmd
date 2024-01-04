@@ -1,0 +1,36 @@
+---
+title: "Combine All Plot Data into One XLSX"
+author: "Tuan M. Tran"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Combine Plot Data into One
+
+```{r load libraries}
+library(tidyverse)
+library(readxl)
+library(writexl)
+```
+
+### Readin All Files
+
+
+```{r readin data, echo=FALSE}
+datadir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/"
+
+myfiles <- list.files(path = datadir, pattern='*.xlsx')
+df.list <- lapply(paste0(datadir, myfiles), read_excel)
+names(df.list) <- gsub("Fig ", "Figure ",sub("^(\\S*\\s+\\S+).*", "\\1", myfiles))
+df.list <- df.list[order(names(df.list))]
+```
+
+### Save to single excel file
+
+```{r save to file}
+writexl::write_xlsx(df.list, path = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Supplementary Tables JCI resubmission/Supporting data values.xlsx")
+```

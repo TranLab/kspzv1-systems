@@ -1,0 +1,622 @@
+---
+title: "PfSPZ correlation chord diagrams post-vax"
+author: "Prasida Holla, Aditi Upadhye"
+date: "6/01/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Objective:
+To make linear correlations between the PfSPZ vaccine transcriptomic data and non-trasncriptomic data, the latter of which includes select features from the phenoData, flow cytometric parameters and cytokine levels as assessed by luminex cytokine array. The transcriptomic data from RNA-seq is collapsed into high level blood transcription modules (BTMs) or into Monaco et al. modules. The correlations are visualized as a chord diagram or circos plot. 
+
+Steps:
+1. Filter and keep select features from non-transcriptomic data (Phil Swanson's FACS data, post-vaccination CSP-specific IgG antibody levels and cytokine levels)
+2. Load the expression set and filter the phenoData for Time point (0 for baseline, 25 for post-vaccination), and time to parasitemia at 6 months. 
+3. Merge the selected phenoData features with the filtered non-transcritomic data. We will call this "alldata"
+4. Collapse transcriptomic data (eset) into blood transcription modules (BTMs) or Monaco et al. modules
+5. Merge the "alldata" with the BTMs or Monaco modules using patient ID
+6. Run correlations using ggcorrplot, which should give a table of Pearson's r values and pvalues for each correlation
+7. Convert pvalues to FDR and use it to keep only significant correlations
+8. Keeping only the top triangle of the correlation matrix, use the package 'Circlize' to visualize the correlations as a chord diagram (aka circos plot). 
+9. This script is specifically for baseline features
+
+Notes: 
+- Post-vaccination CSP-specific IgG was used for correlations at baseline
+- Cytokine levels were only included in the baseline, and not in the correlations of post-vaccination and delta
+
+Per reviewer request, now visualize only correlations with FDR<5%.
+
+## Load required packages
+
+```{r load libraries, include = TRUE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tibble)
+library(viridis)
+library(ggpubr)
+library(readxl)
+library(ggcorrplot)
+library(Biobase)
+library(miscTools)
+library(circlize)
+library(RColorBrewer)
+library(googledrive)
+library(Hmisc)
+library(tmod)
+```
+
+```{r set local directory, include=FALSE, eval=FALSE, echo=FALSE}
+datadir <- "/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/"
+figdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Working Figures/"
+```
+
+# Import the expression set and non-transcriptomic data (FACS, cytokine, ICS)
+
+```{r load data,  message=FALSE, warning=FALSE}
+##import all non-transcriptomic data google drive
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1acv8D-gex3ps8o9SCWZT5ueP7XuPeHs3"), path = temp, overwrite = TRUE)
+alldata <- readRDS(file = dl$local_path)
+
+#load the post-vax expression dataset
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1w5Wzta8XISNHZ6KL-x9_qO98m3LxaOBa"), path = temp, overwrite = TRUE)
+eset <- readRDS(file = dl$local_path)
+```
+
+```{r load data local, include=FALSE, eval=FALSE, echo=FALSE}
+#local path
+#alldata <- readRDS("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/PfSPZ_FACS_PlasmaCytokine_MonocyteActivation_05012021.Rds")
+#alldata <- readRDS(paste0(wdir,"Forbaseline_non_transcriptomic_data.rds")) 
+
+#aditi's file
+# alldata <- readRDS("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/all_non_transcriptomic_data.rds")
+
+# eset <- readRDS("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 logCPM expression sets for visualization/PfSPZ_cpm_ExpressionSet_243x21576_AllGroups_bothBatches_25_rmBatchFX_06082021_TMT_logTRUE.rds")
+```
+
+# Convert gene expression data to BTM expression scores and join to other data
+
+```{r collapse eset to modules,  message=FALSE, warning=FALSE, results='hide'}
+source("https://raw.githubusercontent.com/TranLab/ModuleLists/main/Gene2ModuleExpressionScores.R")
+
+pas_hibtm <- Gene2ModuleExpressionScores(eset, module_list = "highBTMs", summary_stat = median)
+rownames(pas_hibtm) <- paste(rownames(pas_hibtm), "highBTM")
+rownames(pas_hibtm) <- gsub(" ", "_", rownames(pas_hibtm))
+
+pas_monaco <- Gene2ModuleExpressionScores(eset, module_list = "MonacoModules", summary_stat = median)
+rownames(pas_monaco) <- paste(rownames(pas_monaco), "monaco")
+rownames(pas_monaco) <- gsub(" ", "_", rownames(pas_monaco))
+
+pas_lowbtm <- Gene2ModuleExpressionScores(eset, module_list = "lowBTMs", summary_stat = median)
+rownames(pas_lowbtm) <- paste(rownames(pas_lowbtm), "lowBTM")
+rownames(pas_lowbtm) <- gsub(" ", "_", rownames(pas_lowbtm))
+```
+
+```{r collapse eset to modules continued,  message=FALSE, warning=FALSE, results='hide'}
+#test innate only
+data(tmod)
+innate <-  tmod[unique(c(grep("[Ii]nterferon", tmod$gs$Title),
+                         grep("interferon", tmod$gs$Title),
+                         grep("[Ii]nnate", tmod$gs$Title),
+                         grep("LPS", tmod$gs$Title),
+                         grep("[Ee]ndotoxin", tmod$gs$Title),
+                         grep("[Aa]ctivated", tmod$gs$Title),
+                         grep("[Mm]onocytes", tmod$gs$Title),
+                         grep("DC", tmod$gs$Title),
+                         grep("[Dd]endritic", tmod$gs$Title),
+                         grep("[Nn]eutrophils", tmod$gs$Title),
+                         grep("[Mm]yeloid", tmod$gs$Title),
+                         grep("[Vv]iral", tmod$gs$Title),
+                         grep("[Pp]rostanoids", tmod$gs$Title),
+                         grep("[Pp]rostaglandins", tmod$gs$Title),
+                         grep("IRF", tmod$gs$Title),
+                         grep("IFN", tmod$gs$Title),
+                         grep("IL", tmod$gs$Title),
+                         grep("CXC", tmod$gs$Title),
+                         grep("TLR", tmod$gs$Title),
+                         grep("JAK", tmod$gs$Title),
+                         grep("STAT", tmod$gs$Title),
+                         grep("RIG", tmod$gs$Title),
+                         grep("TNF", tmod$gs$Title),
+                         grep("[Ii]nflam", tmod$gs$Title),
+                         grep("I\\:C", tmod$gs$Title)))]
+eigengene_LI_DC <- eigengene(x = exprs(eset), g = fData(eset)$GeneSymbol, mset = tmod, k = 1)
+
+pas_all <- t(rbind(pas_hibtm, pas_monaco, pas_lowbtm, eigengene_LI_DC)) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "PATID") %>%
+  mutate(PATID = gsub("_25", "", PATID))
+
+clin_dat <- pData(eset) %>%
+  dplyr::select(PATID, treat, tte.mal.atp.6, pfcsp_post,log2FC_CSPAb)
+
+alldata_select <- alldata %>%
+  dplyr::select(PATID.OG, Timepoint, contains("FACS"), contains("CytokineObsConc")) %>%
+  dplyr::rename(PATID = PATID.OG) %>%
+  mutate(PATID = gsub("\\_.*", "", PATID)) %>%
+  pivot_wider(., id_cols = PATID, names_from = Timepoint, values_from = 3:ncol(.),names_sep = "_") %>%
+  select_if(~sum(!is.na(.)) > 0) %>% #remove columns with all NAs
+  dplyr::select(PATID, contains("FACS_PfSPZ"), matches("(FACS.*25)"), matches("(FACS_PfSPZ-specific_CD3.*25)"),
+                matches("(FACS_CSP-specific.*25)"), contains("CytokineObsConc")) %>%
+  dplyr::select(-c(contains("Vd2_of_TCRgd"))) %>% #remove redundant features
+  dplyr::select(-c(contains("of_live_lymphocytes"))) %>% #remove redundant features
+  dplyr::select(-c(contains("of_live_monocytes"))) #remove redundant features
+
+all_data_btm <- clin_dat %>%
+                left_join(., alldata_select,  by = "PATID") %>%
+                left_join(., pas_all,  by = "PATID") %>%
+  dplyr::select(-treat)
+```
+
+The following is applicable to baseline data only: columns that have a large percentage of zero values and a few high leverage points tend to show up as significant correlations downstream. To avoid this, remove columns that contain ~>75% zero values. Only certain cytokines fell into this category, and by thresholding, we were able to remove them and prevent 'false' correlations. 
+
+```{r remove columns with >75% zeros,  message=FALSE, warning=FALSE}
+# For high-level BTMs
+ncol(all_data_btm)
+i <- colSums(all_data_btm == 0, na.rm=TRUE) < 0.75*nrow(all_data_btm)  
+all_data_btm <- all_data_btm[i]
+ncol(all_data_btm) 
+```
+
+# Run correlations for all BTMs
+
+```{r correlations of the combined all_data,  message=FALSE, warning=FALSE}
+#remove Monaco
+all_data_allBTMs <- all_data_btm %>%
+  dplyr::select(-c(PATID))
+cor_res_allBTMs <- rcorr(as.matrix(all_data_allBTMs))
+
+#Flatten correlation matrix using nifty function
+#http://www.sthda.com/english/wiki/correlation-matrix-a-quick-start-guide-to-analyze-format-and-visualize-a-correlation-matrix-using-r-software
+
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
+}
+
+flat_cormat_allBTMs <- flattenCorrMatrix(cor_res_allBTMs$r, cor_res_allBTMs$P)
+
+#filter only correlations that include CSP IgG, post-vax, and time-to-parasitemia
+flat_cormat_allBTMs_filtered <- flat_cormat_allBTMs %>%
+  filter(grepl("tte.mal.atp.6", .$row) | grepl("tte.mal.atp.6", .$col) |
+           grepl("pfcsp_post", .$row) | grepl("pfcsp_post", .$col) |
+           grepl("log2FC_CSPAb", .$row) | grepl("log2FC_CSPAb", .$col) |
+           (grepl("_25", .$row) & grepl("PfSPZ-specific_CD3", .$row)) | (grepl("_25", .$col) & grepl("PfSPZ-specific_CD3", .$col))) %>%
+  filter(!grepl("_of_live_lymphocytes", .$row)) %>% #remove redundant features (of live lymphocytes = of live PBMCs)
+  filter(!grepl("_of_live_lymphocytes", .$col)) %>%
+  mutate(row_dummy = gsub("_25|_0", "", .$row)) %>%
+  mutate(col_dummy = gsub("_25|_0", "", .$col)) %>%
+  filter(row_dummy != col_dummy) %>% #remove features that correlate with itself overtime
+  mutate(FDR = p.adjust(p, method = "BH")) %>%
+  filter(FDR<0.05)
+  arrange(FDR) 
+
+select_features <- unique(c(flat_cormat_allBTMs_filtered$row, flat_cormat_allBTMs_filtered$column))
+```
+
+
+```{r plot networks allBTMs}
+library(corrr)
+
+cormat_allBTMs_filtered <- cor_res_allBTMs$r[select_features,select_features]
+
+rownames(cormat_allBTMs_filtered) <- gsub("FACS_|_lowBTM|_highBTM|_monaco|CytokineObsConc_", "", rownames(cormat_allBTMs_filtered))
+colnames(cormat_allBTMs_filtered) <- gsub("FACS_|_lowBTM|_highBTM|_monaco|CytokineObsConc_", "", colnames(cormat_allBTMs_filtered))
+rownames(cormat_allBTMs_filtered) <- gsub("PfSPZ", "Pf", rownames(cormat_allBTMs_filtered))
+colnames(cormat_allBTMs_filtered) <- gsub("PfSPZ", "Pf", colnames(cormat_allBTMs_filtered))
+rownames(cormat_allBTMs_filtered) <- gsub("_of_live_PBMCs", "", rownames(cormat_allBTMs_filtered))
+colnames(cormat_allBTMs_filtered) <- gsub("_of_live_PBMCs", "", colnames(cormat_allBTMs_filtered))
+rownames(cormat_allBTMs_filtered) <- gsub("_of_live_leukocytes", "", rownames(cormat_allBTMs_filtered))
+colnames(cormat_allBTMs_filtered) <- gsub("_of_live_leukocytes", "", colnames(cormat_allBTMs_filtered))
+rownames(cormat_allBTMs_filtered) <- gsub("25", "post-vax", rownames(cormat_allBTMs_filtered))
+colnames(cormat_allBTMs_filtered) <- gsub("25", "post-vax", colnames(cormat_allBTMs_filtered))
+rownames(cormat_allBTMs_filtered) <- gsub("0", "baseline", rownames(cormat_allBTMs_filtered))
+colnames(cormat_allBTMs_filtered) <- gsub("0", "baseline", colnames(cormat_allBTMs_filtered))
+rownames(cormat_allBTMs_filtered) <- gsub("_", " ", rownames(cormat_allBTMs_filtered))
+colnames(cormat_allBTMs_filtered) <- gsub("_", " ", colnames(cormat_allBTMs_filtered))
+
+
+my_network_plot <- network_plot(cormat_allBTMs_filtered, 
+                                legend = "full",
+                                colors = c("blue", "white", "red"),
+                                min_cor = .10) 
+my_network_plot
+#ggsave(filename = paste0(resdir, "network_plot_mincor20_spearman.pdf"), plot = my_network_plot, device = "pdf", width = 8, height = 3)
+```
+
+# Run correlations for high BTMs
+
+```{r correlations of the combined all_data hiBTMs,  message=FALSE, warning=FALSE}
+#remove Monaco
+all_data_highBTMs <- all_data_btm %>%
+  dplyr::select(-c(PATID, contains("_monaco"), contains("_lowBTM")))
+cor_res_highBTMs <- rcorr(as.matrix(all_data_highBTMs))
+
+#Flatten correlation matrix using nifty function
+#http://www.sthda.com/english/wiki/correlation-matrix-a-quick-start-guide-to-analyze-format-and-visualize-a-correlation-matrix-using-r-software
+
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
+}
+
+flat_cormat_highBTMs <- flattenCorrMatrix(cor_res_highBTMs$r, cor_res_highBTMs$P)
+
+#filter only correlations that include CSP IgG, cytokines, and time-to-parasitemia
+
+flat_cormat_highBTMs_filtered <- flat_cormat_highBTMs %>%
+  filter(grepl("tte", .$row) | grepl("tte", .$col) |
+           grepl("pfcsp_post", .$row) | grepl("pfcsp_post", .$col) |
+           grepl("log2FC_CSPAb", .$row) | grepl("log2FC_CSPAb", .$col) |
+           (grepl("_25", .$row) & grepl("PfSPZ-specific_CD3", .$row)) | (grepl("_25", .$col) & grepl("PfSPZ-specific_CD3", .$col)) |
+           (grepl("_25", .$row) & grepl("CSP-spec", .$row)) | (grepl("_25", .$col) & grepl("CSP-spec", .$col))) %>%
+  filter(grepl("tte", .$row) | grepl("tte", .$col)) %>%
+  mutate(FDR = p.adjust(p, method = "BH")) %>%
+  filter(FDR<0.20) %>%
+  arrange(FDR)
+
+select_features <- unique(c(flat_cormat_highBTMs_filtered$row, flat_cormat_highBTMs_filtered$column))
+```
+
+```{r plot networks highBTMs}
+library(corrr)
+
+cormat_highBTMs_filtered <- cor_res_highBTMs$r[select_features,select_features]
+
+rownames(cormat_highBTMs_filtered) <- gsub("FACS_|_lowBTM|_highBTM|_monaco|CytokineObsConc_", "", rownames(cormat_highBTMs_filtered))
+colnames(cormat_highBTMs_filtered) <- gsub("FACS_|_lowBTM|_highBTM|_monaco|CytokineObsConc_", "", colnames(cormat_highBTMs_filtered))
+rownames(cormat_highBTMs_filtered) <- gsub("PfSPZ", "Pf", rownames(cormat_highBTMs_filtered))
+colnames(cormat_highBTMs_filtered) <- gsub("PfSPZ", "Pf", colnames(cormat_highBTMs_filtered))
+rownames(cormat_highBTMs_filtered) <- gsub("_of_live_PBMCs", "", rownames(cormat_highBTMs_filtered))
+colnames(cormat_highBTMs_filtered) <- gsub("_of_live_PBMCs", "", colnames(cormat_highBTMs_filtered))
+rownames(cormat_highBTMs_filtered) <- gsub("_of_live_leukocytes", "", rownames(cormat_highBTMs_filtered))
+colnames(cormat_highBTMs_filtered) <- gsub("_of_live_leukocytes", "", colnames(cormat_highBTMs_filtered))
+rownames(cormat_highBTMs_filtered) <- gsub("25", "post-vax", rownames(cormat_highBTMs_filtered))
+colnames(cormat_highBTMs_filtered) <- gsub("25", "post-vax", colnames(cormat_highBTMs_filtered))
+rownames(cormat_highBTMs_filtered) <- gsub("0", "baseline", rownames(cormat_highBTMs_filtered))
+colnames(cormat_highBTMs_filtered) <- gsub("0", "baseline", colnames(cormat_highBTMs_filtered))
+rownames(cormat_highBTMs_filtered) <- gsub("_", " ", rownames(cormat_highBTMs_filtered))
+colnames(cormat_highBTMs_filtered) <- gsub("_", " ", colnames(cormat_highBTMs_filtered))
+
+
+my_highBTM_network_plot <- network_plot(cormat_highBTMs_filtered, 
+                                legend = "full",
+                                colors = c("blue", "white", "red"),
+                                min_cor = .20)
+```
+
+```{r plot highBTM network plot, fig.align='center', fig.height=10, fig.width=10}
+my_highBTM_network_plot
+#ggsave(filename = paste0(resdir, "network_plot_mincor20_spearman.pdf"), plot = my_network_plot, device = "pdf", width = 8, height = 3)
+```
+
+
+# Run correlations for Monaco modules
+
+```{r correlations of the combined all_data monaco,  message=FALSE, warning=FALSE}
+#remove highBTM
+all_data_monaco <- all_data_btm %>%
+  dplyr::select(-c(PATID, contains("highBTM"), contains("lowBTM")))
+cor_res_monaco <- rcorr(as.matrix(all_data_monaco), type = "pearson")
+
+#Flatten correlation matrix using nifty function
+#http://www.sthda.com/english/wiki/correlation-matrix-a-quick-start-guide-to-analyze-format-and-visualize-a-correlation-matrix-using-r-software
+
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
+}
+
+flat_cormat_monaco <- flattenCorrMatrix(cor_res_monaco$r, cor_res_monaco$P)
+
+#filter only correlations that include CSP IgG, cytokines, and time-to-parasitemia
+flat_cormat_monaco_filtered <- flat_cormat_monaco %>%
+  filter(grepl("tte", .$row) | grepl("tte", .$col) |
+           grepl("pfcsp_post", .$row) | grepl("pfcsp_post", .$col) |
+           grepl("log2FC_CSPAb", .$row) | grepl("log2FC_CSPAb", .$col) |
+           (grepl("_25", .$row) & grepl("PfSPZ-specific_CD3", .$row)) | (grepl("_25", .$col) & grepl("PfSPZ-specific_CD3", .$col)) |
+           (grepl("_25", .$row) & grepl("CSP-spec", .$row)) | (grepl("_25", .$col) & grepl("CSP-spec", .$col))) %>%
+    mutate(FDR = p.adjust(p, method = "BH")) %>%
+  filter(FDR<0.2) %>%
+  arrange(FDR)
+
+select_features <- unique(c(flat_cormat_monaco_filtered$row, flat_cormat_monaco_filtered$column))
+```
+
+```{r plot networks monaco}
+library(corrr)
+
+cormat_monaco_filtered <- cor_res_monaco$r[select_features,select_features]
+
+rownames(cormat_monaco_filtered) <- gsub("FACS_|_lowBTM|_highBTM|_monaco|CytokineObsConc_", "", rownames(cormat_monaco_filtered))
+colnames(cormat_monaco_filtered) <- gsub("FACS_|_lowBTM|_highBTM|_monaco|CytokineObsConc_", "", colnames(cormat_monaco_filtered))
+rownames(cormat_monaco_filtered) <- gsub("PfSPZ", "Pf", rownames(cormat_monaco_filtered))
+colnames(cormat_monaco_filtered) <- gsub("PfSPZ", "Pf", colnames(cormat_monaco_filtered))
+rownames(cormat_monaco_filtered) <- gsub("_of_live_PBMCs", "", rownames(cormat_monaco_filtered))
+colnames(cormat_monaco_filtered) <- gsub("_of_live_PBMCs", "", colnames(cormat_monaco_filtered))
+rownames(cormat_monaco_filtered) <- gsub("_of_live_leukocytes", "", rownames(cormat_monaco_filtered))
+colnames(cormat_monaco_filtered) <- gsub("_of_live_leukocytes", "", colnames(cormat_monaco_filtered))
+rownames(cormat_monaco_filtered) <- gsub("25", "post-vax", rownames(cormat_monaco_filtered))
+colnames(cormat_monaco_filtered) <- gsub("25", "post-vax", colnames(cormat_monaco_filtered))
+rownames(cormat_monaco_filtered) <- gsub("0", "baseline", rownames(cormat_monaco_filtered))
+colnames(cormat_monaco_filtered) <- gsub("0", "baseline", colnames(cormat_monaco_filtered))
+rownames(cormat_monaco_filtered) <- gsub("_", " ", rownames(cormat_monaco_filtered))
+colnames(cormat_monaco_filtered) <- gsub("_", " ", colnames(cormat_monaco_filtered))
+
+
+my_monaco_network_plot <- network_plot(cormat_monaco_filtered, 
+                                legend = "full",
+                                colors = c("blue", "white", "red"),
+                                min_cor = .20) 
+```
+
+```{r plot monaco network plot, fig.align='center', fig.height=10, fig.width=10}
+my_monaco_network_plot
+#ggsave(filename = paste0(resdir, "network_plot_mincor20_spearman.pdf"), plot = my_network_plot, device = "pdf", width = 8, height = 3)
+```
+
+
+# Run correlations for low BTMs
+
+```{r correlations of the combined all_data hiBTMs,  message=FALSE, warning=FALSE}
+#remove high BTM and monaco
+all_data_lowBTMs <- all_data_btm %>%
+  dplyr::select(-c(PATID, contains("_highBTM"), contains("_monaco")))
+
+#Flatten correlation matrix using nifty function
+#http://www.sthda.com/english/wiki/correlation-matrix-a-quick-start-guide-to-analyze-format-and-visualize-a-correlation-matrix-using-r-software
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
+}
+
+#find correlations Hmisc method
+cor_res_lowBTMs <- rcorr(as.matrix(all_data_lowBTMs), type = "spearman")
+flat_cormat_lowBTMs <- flattenCorrMatrix(cor_res_lowBTMs$r, cor_res_lowBTMs$P)
+
+#find correlations psych method
+# cor_res_lowBTMs <- all_data_lowBTMs %>%
+#   psych::corr.test(., use = "pairwise.complete.obs", method = "spearman", adjust = "fdr")
+# flat_cormat_lowBTMs <- flattenCorrMatrix(cor_res_lowBTMs$r, cor_res_lowBTMs$p)
+```
+
+Filter only correlations that include CSP IgG, Pf-specific post-vax, and time-to-parasitemia
+
+```{r limit to relevant correlations lowBTMs}
+flat_cormat_lowBTMs_filtered <- flat_cormat_lowBTMs %>%
+  filter(grepl("tte", .$row) | grepl("tte", .$col) |
+           grepl("pfcsp_post", .$row) | grepl("pfcsp_post", .$col) |
+           grepl("log2FC_CSPAb", .$row) | grepl("log2FC_CSPAb", .$col) |
+           (grepl("_25", .$row) & grepl("PfSPZ-specific_CD3", .$row)) | (grepl("_25", .$col) &
+                                                                           grepl("PfSPZ-specific_CD3", .$col)) |
+           (grepl("_25", .$row) & grepl("CSP-specific", .$row)) | (grepl("_25", .$col) & grepl("CSP-specific", .$col))) %>%
+  mutate(FDR = p.adjust(p, method = "BH")) %>%
+  filter(FDR<0.2) %>%
+  arrange(FDR)
+
+select_features <- unique(c(flat_cormat_lowBTMs_filtered$row, flat_cormat_lowBTMs_filtered$column))
+```
+
+```{r plot networks lowBTMs}
+library(corrr)
+
+cor_r_lowBTMs_filtered <- cor_res_lowBTMs$r[select_features,select_features]
+cor_n_lowBTMs_filtered <- cor_res_lowBTMs$n[select_features,select_features]
+cor_p_lowBTMs_filtered <- cor_res_lowBTMs$p[select_features,select_features]
+cor_fdr_res_lowBTMs_filtered <- psych::corr.p(cor_r_lowBTMs_filtered,
+                                           cor_n_lowBTMs_filtered,
+                                           adjust="fdr",alpha=.2,minlength=5,ci=TRUE)
+
+rownames(cor_r_lowBTMs_filtered) <- gsub("FACS_|_lowBTM|_highBTM|_monaco|CytokineObsConc_", "", rownames(cor_r_lowBTMs_filtered))
+colnames(cor_r_lowBTMs_filtered) <- gsub("FACS_|_lowBTM|_highBTM|_monaco|CytokineObsConc_", "", colnames(cor_r_lowBTMs_filtered))
+rownames(cor_r_lowBTMs_filtered) <- gsub("PfSPZ", "Pf", rownames(cor_r_lowBTMs_filtered))
+colnames(cor_r_lowBTMs_filtered) <- gsub("PfSPZ", "Pf", colnames(cor_r_lowBTMs_filtered))
+rownames(cor_r_lowBTMs_filtered) <- gsub("_of_live_PBMCs", "", rownames(cor_r_lowBTMs_filtered))
+colnames(cor_r_lowBTMs_filtered) <- gsub("_of_live_PBMCs", "", colnames(cor_r_lowBTMs_filtered))
+rownames(cor_r_lowBTMs_filtered) <- gsub("_of_live_leukocytes", "", rownames(cor_r_lowBTMs_filtered))
+colnames(cor_r_lowBTMs_filtered) <- gsub("_of_live_leukocytes", "", colnames(cor_r_lowBTMs_filtered))
+rownames(cor_r_lowBTMs_filtered) <- gsub("25", "post-vax", rownames(cor_r_lowBTMs_filtered))
+colnames(cor_r_lowBTMs_filtered) <- gsub("25", "post-vax", colnames(cor_r_lowBTMs_filtered))
+rownames(cor_r_lowBTMs_filtered) <- gsub("_0", " baseline", rownames(cor_r_lowBTMs_filtered))
+colnames(cor_r_lowBTMs_filtered) <- gsub("_0", " baseline", colnames(cor_r_lowBTMs_filtered))
+rownames(cor_r_lowBTMs_filtered) <- gsub("_", " ", rownames(cor_r_lowBTMs_filtered))
+colnames(cor_r_lowBTMs_filtered) <- gsub("_", " ", colnames(cor_r_lowBTMs_filtered))
+rownames(cor_r_lowBTMs_filtered) <- gsub("tte.mal.atp.6", "time to parasitemia", rownames(cor_r_lowBTMs_filtered))
+colnames(cor_r_lowBTMs_filtered) <- gsub("tte.mal.atp.6", "time to parasitemia", colnames(cor_r_lowBTMs_filtered))
+rownames(cor_r_lowBTMs_filtered) <- gsub("log2FC CSPAb", "ΔCSP-specific IgG", rownames(cor_r_lowBTMs_filtered))
+colnames(cor_r_lowBTMs_filtered) <- gsub("log2FC CSPAb", "ΔCSP-specific IgG", rownames(cor_r_lowBTMs_filtered), colnames(cor_r_lowBTMs_filtered))
+rownames(cor_r_lowBTMs_filtered) <- gsub("pfcsp post", "CSP-specific IgG post-vax", rownames(cor_r_lowBTMs_filtered))
+colnames(cor_r_lowBTMs_filtered) <- gsub("pfcsp post", "CSP-specific IgG post-vax", colnames(cor_r_lowBTMs_filtered))
+
+my_lowBTM_corplot <- ggcorrplot(corr = cor_r_lowBTMs_filtered,
+                               hc.order = TRUE,
+                               hc.method = "complete",
+                               outline.col = "white",
+                               ggtheme = ggplot2::theme_minimal(),
+                               colors = c("darkblue", "white", "darkred"),
+                               type = "upper",
+                               sig.level = 0.05,
+                               p.mat = cor_p_lowBTMs_filtered,
+                               insig = "blank",
+                               lab = "true",
+                               tl.cex = 10,
+                               lab_size = 2)
+
+my_lowBTM_network_plot <- network_plot(cor_r_lowBTMs_filtered, 
+                                legend = "full",
+                                colors = c("darkblue", "white", "darkred"),
+                                min_cor = .20,
+                                curved = TRUE)
+
+```
+
+```{r plot network plot lowBTM, fig.align='center', fig.height=4, fig.width=8}
+my_lowBTM_network_plot
+#ggsave(filename = paste0(resdir, "all_timepoints_corplot_cognitive_cytokines_spearman_fdr10_with_maternal_education.pdf"), plot = baseline_corplot, device = "pdf", width = 8, height = 8)
+```
+
+```{r plot corrmat lowBTM, fig.align='center', fig.height=6, fig.width=6}
+my_lowBTM_corplot
+#ggsave(filename = paste0(resdir, "all_timepoints_corplot_cognitive_cytokines_spearman_fdr10_with_maternal_education.pdf"), plot = baseline_corplot, device = "pdf", width = 8, height = 8)
+```
+
+
+# Run correlations for eigenvalue BTMs
+
+```{r correlations of the combined innate BTMs,  message=FALSE, warning=FALSE}
+#remove high BTM and monaco
+all_data_innate_BTMs <- all_data_btm %>%
+  dplyr::select(-c(PATID, contains("_highBTM"), contains("_monaco"), contains("_lowBTM"), contains("DC.")))
+
+#Flatten correlation matrix using nifty function
+#http://www.sthda.com/english/wiki/correlation-matrix-a-quick-start-guide-to-analyze-format-and-visualize-a-correlation-matrix-using-r-software
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+    )
+}
+
+#find correlations Hmisc method
+cor_res_innate_BTMs <- rcorr(as.matrix(all_data_innate_BTMs), type = "pearson")
+flat_cormat_innate_BTMs <- flattenCorrMatrix(cor_res_innate_BTMs$r, cor_res_innate_BTMs$P)
+
+#find correlations psych method
+# cor_res_innate_BTMs <- all_data_innate_BTMs %>%
+#   psych::corr.test(., use = "pairwise.complete.obs", method = "spearman", adjust = "fdr")
+# flat_cormat_innate_BTMs <- flattenCorrMatrix(cor_res_innate_BTMs$r, cor_res_innate_BTMs$p)
+
+#find correlations using group dplyr and cor
+# all_data_innate_BTMs_long <- all_data_innate_BTMs %>%
+#   pivot_longer(., cols = )
+# 
+# summarized_correlations <- FACS_TTE_longdat %>%
+#   group_by(feature) %>%
+#   summarise(baseline_spearman_r_tte6mos = stats::cor.test(Baseline, tte.mal.atp.6, method = myCorMeth)$estimate,
+#             baseline_spearman_pval_tte6mos = stats::cor.test(Baseline, tte.mal.atp.6, method = myCorMeth)$p.val,
+#             postvax_spearman_r_tte6mos = stats::cor.test(Post_Vaccination, tte.mal.atp.6, method = myCorMeth)$estimate,
+#             postvax_spearman_pval_tte6mos = stats::cor.test(Post_Vaccination, tte.mal.atp.6, method = myCorMeth)$p.val,
+#             LFC_spearman_r_tte6mos = stats::cor.test(LFC, tte.mal.atp.6, method = myCorMeth)$estimate,
+#             LFC_spearman_pval_tte6mos = stats::cor.test(LFC, tte.mal.atp.6, method = myCorMeth)$p.val) %>%
+
+```
+
+Filter only correlations that include CSP IgG, Pf-specific post-vax, and time-to-parasitemia
+
+```{r limit to relevant correlations innate_BTMs}
+# flat_cormat_innate_BTMs_filtered <- flat_cormat_innate_BTMs %>%
+#   filter(grepl("tte", .$row) | grepl("tte", .$col) |
+#            grepl("pfcsp_post", .$row) | grepl("pfcsp_post", .$col) |
+#            grepl("log2FC_CSPAb", .$row) | grepl("log2FC_CSPAb", .$col) |
+#            (grepl("_25", .$row) & grepl("PfSPZ-specific_CD3", .$row)) | (grepl("_25", .$col) &
+#                                                                            grepl("PfSPZ-specific_CD3", .$col)) |
+#            (grepl("_25", .$row) & grepl("CSP-specific", .$row)) | (grepl("_25", .$col) & grepl("CSP-specific", .$col))) %>%
+#   mutate(FDR = p.adjust(p, method = "BH")) %>%
+#   filter(FDR<0.05) %>%
+#   arrange(FDR)
+
+flat_cormat_innate_BTMs_filtered <- flat_cormat_innate_BTMs %>%
+  filter(grepl("tte", .$row) | grepl("tte", .$col)) %>%
+  mutate(FDR = p.adjust(p, method = "BH")) %>%
+  filter(p<0.01) %>%
+  arrange(FDR)
+
+select_features <- unique(c(flat_cormat_innate_BTMs_filtered$row, flat_cormat_innate_BTMs_filtered$column))
+```
+
+```{r plot networks innate_BTMs}
+library(corrr)
+
+cor_r_innate_BTMs_filtered <- cor_res_innate_BTMs$r[select_features,select_features]
+cor_n_innate_BTMs_filtered <- cor_res_innate_BTMs$n[select_features,select_features]
+cor_p_innate_BTMs_filtered <- cor_res_innate_BTMs$p[select_features,select_features]
+cor_fdr_res_innate_BTMs_filtered <- psych::corr.p(cor_r_innate_BTMs_filtered,
+                                           cor_n_innate_BTMs_filtered,
+                                           adjust="fdr",alpha=.2,minlength=5,ci=TRUE)
+
+rownames(cor_r_innate_BTMs_filtered) <- gsub("FACS_|_innate_BTM|_highBTM|_monaco|CytokineObsConc_", "", rownames(cor_r_innate_BTMs_filtered))
+colnames(cor_r_innate_BTMs_filtered) <- gsub("FACS_|_innate_BTM|_highBTM|_monaco|CytokineObsConc_", "", colnames(cor_r_innate_BTMs_filtered))
+rownames(cor_r_innate_BTMs_filtered) <- gsub("PfSPZ", "Pf", rownames(cor_r_innate_BTMs_filtered))
+colnames(cor_r_innate_BTMs_filtered) <- gsub("PfSPZ", "Pf", colnames(cor_r_innate_BTMs_filtered))
+rownames(cor_r_innate_BTMs_filtered) <- gsub("_of_live_PBMCs", "", rownames(cor_r_innate_BTMs_filtered))
+colnames(cor_r_innate_BTMs_filtered) <- gsub("_of_live_PBMCs", "", colnames(cor_r_innate_BTMs_filtered))
+rownames(cor_r_innate_BTMs_filtered) <- gsub("_of_live_leukocytes", "", rownames(cor_r_innate_BTMs_filtered))
+colnames(cor_r_innate_BTMs_filtered) <- gsub("_of_live_leukocytes", "", colnames(cor_r_innate_BTMs_filtered))
+rownames(cor_r_innate_BTMs_filtered) <- gsub("25", "post-vax", rownames(cor_r_innate_BTMs_filtered))
+colnames(cor_r_innate_BTMs_filtered) <- gsub("25", "post-vax", colnames(cor_r_innate_BTMs_filtered))
+rownames(cor_r_innate_BTMs_filtered) <- gsub("_0", " baseline", rownames(cor_r_innate_BTMs_filtered))
+colnames(cor_r_innate_BTMs_filtered) <- gsub("_0", " baseline", colnames(cor_r_innate_BTMs_filtered))
+rownames(cor_r_innate_BTMs_filtered) <- gsub("_", " ", rownames(cor_r_innate_BTMs_filtered))
+colnames(cor_r_innate_BTMs_filtered) <- gsub("_", " ", colnames(cor_r_innate_BTMs_filtered))
+rownames(cor_r_innate_BTMs_filtered) <- gsub("tte.mal.atp.6", "time to parasitemia", rownames(cor_r_innate_BTMs_filtered))
+colnames(cor_r_innate_BTMs_filtered) <- gsub("tte.mal.atp.6", "time to parasitemia", colnames(cor_r_innate_BTMs_filtered))
+rownames(cor_r_innate_BTMs_filtered) <- gsub("log2FC CSPAb", "ΔCSP-specific IgG", rownames(cor_r_innate_BTMs_filtered))
+colnames(cor_r_innate_BTMs_filtered) <- gsub("log2FC CSPAb", "ΔCSP-specific IgG", rownames(cor_r_innate_BTMs_filtered), colnames(cor_r_innate_BTMs_filtered))
+rownames(cor_r_innate_BTMs_filtered) <- gsub("pfcsp post", "CSP-specific IgG post-vax", rownames(cor_r_innate_BTMs_filtered))
+colnames(cor_r_innate_BTMs_filtered) <- gsub("pfcsp post", "CSP-specific IgG post-vax", colnames(cor_r_innate_BTMs_filtered))
+rownames(cor_r_innate_BTMs_filtered) <- plyr::mapvalues(rownames(cor_r_innate_BTMs_filtered),
+                                                        from = tmod$gs$ID, to = tmod$gs$Title, warn_missing =F) #replace BTM IDs with titles
+colnames(cor_r_innate_BTMs_filtered) <- plyr::mapvalues(colnames(cor_r_innate_BTMs_filtered),
+                                                        from = tmod$gs$ID, to = tmod$gs$Title, warn_missing =F) #replace BTM IDs with titles
+
+my_innate_BTM_corplot <- ggcorrplot(corr = cor_r_innate_BTMs_filtered,
+                               hc.order = TRUE,
+                               hc.method = "complete",
+                               outline.col = "white",
+                               ggtheme = ggplot2::theme_minimal(),
+                               colors = c("blue", "white", "red"),
+                               type = "upper",
+                               sig.level = 0.05,
+                               p.mat = cor_p_innate_BTMs_filtered,
+                               insig = "blank",
+                               lab = "true",
+                               tl.cex = 10,
+                               lab_size = 2)
+
+my_innate_BTM_network_plot <- network_plot(cor_r_innate_BTMs_filtered, 
+                                legend = "full",
+                                colors = c("blue", "white", "red"),
+                                min_cor = .2,
+                                curved = TRUE)
+
+```
+
+```{r plot corrmat innate_BTM, fig.align='center', fig.height=6, fig.width=6}
+my_innate_BTM_corplot
+
+#ggsave(filename = paste0(resdir, "all_timepoints_corplot_cognitive_cytokines_spearman_fdr10_with_maternal_education.pdf"), plot = baseline_corplot, device = "pdf", width = 8, height = 8)
+```
+
+```{r plot innate_BTM network plot, fig.align='center', fig.height=4, fig.width=8}
+my_innate_BTM_network_plot
+#ggsave(filename = paste0(resdir, "network_plot_mincor20_spearman.pdf"), plot = my_network_plot, device = "pdf", width = 8, height = 3)
+```
+

@@ -14,7 +14,7 @@ library(ggplot2)
 ## Read-in data
 
 ```{r readin data, echo = TRUE}
-cd8_dat <- readxl::read_excel("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Elizabeth Leetah Mouse Experiments/Revision PySPZ CD8 T cell Long Format.xlsx")
+cd8_dat <- readxl::read_excel("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Elizabeth Leetah Mouse Experiments/Revision PySPZ CD8 T cell Long Format.xlsx")
 ```
 
 ## Wrangle data
@@ -23,13 +23,13 @@ cd8_dat <- readxl::read_excel("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Pro
 cd8_dat_d0_d7 <- cd8_dat %>%
   filter(Day == 0) %>% #filter day 0
   #filter(Parasitemic_D7 != "yes") %>% #filter mice with parasitemia at Day 7
-  rename(d0_CD8 = CD8) %>%
+  dplyr::rename(d0_CD8 = "CD8") %>%
   select(-c(Day, Parasitemic_D7)) %>%
   left_join(., cd8_dat %>%  #join day 0 to day 7 after filtering
               filter(Day == 7) %>% #filter day 7
               #filter(Parasitemic_D7 != "yes") %>% #filter mice with parasitemia at Day 7
               select(Mouse, CD8) %>%
-              rename(d7_CD8 = CD8),
+              dplyr::rename(d7_CD8 = "CD8"),
             by = "Mouse") %>% 
   mutate(FC = d7_CD8/d0_CD8) %>% #create fold change
   pivot_longer(., cols = d0_CD8:FC, names_to = "day_FC", values_to = "value") %>%
@@ -62,8 +62,14 @@ myPlot
 ```
 
 ```{r plot to PDF, echo=FALSE, eval=FALSE}
-cairo_pdf("/Volumes/GoogleDrive/My Drive/Manuscripts/KSPZV1 Manuscript/Med Revised Submission 2022/Figures/Fig7X CD8 T cells d7 FC baseline both doses.pdf", height = 3.5, width = 6)
+cairo_pdf("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Figure Panels/Fig 7H CD8 T cells d7 FC baseline both doses.pdf", height = 3.5, width = 6)
 myPlot
 dev.off()
 ```
+
+```{r save Figure 7H dat, include=FALSE, echo=FALSE, eval=FALSE}
+myPlot$data %>%
+  writexl::write_xlsx("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 7H Cd11ahi of CD8 Day7 over Day0.xlsx")
+```
+
 

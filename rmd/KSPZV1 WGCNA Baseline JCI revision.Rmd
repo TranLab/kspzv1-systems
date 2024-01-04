@@ -385,7 +385,15 @@ hm <- Heatmap(all_module_trait_hm_mat,
 ```
 
 ```{r draw hm, fig.align='center', fig.width=4, fig.height=4}
-draw(hm)
+hm
+```
+
+
+```{r save fig 2a data, include=FALSE, eval=FALSE, echo=FALSE}
+all_module_trait_hm_mat %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "hub_gene") %>%
+  writexl::write_xlsx("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 2A Baseline WCGNA Module-Trait Heatmap.xlsx")
 ```
 
 ```{r save wgcna module trait heatmap, include=FALSE, echo=FALSE, eval=FALSE}
@@ -491,8 +499,13 @@ signif_hub_genes_only <- all_module_trait_dat %>%
 all_beeswarm_plot
 ```
 
+```{r save fig S3a, include=FALSE, echo=FALSE, eval=FALSE}
+all_beeswarm_plot$data %>%
+  writexl::write_xlsx("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure S3A Baseline WCGNA Module-Trait Association Beeswarm Plots.xlsx")
+```
+
 ```{r save CI revised WGCNA beeswarm plots with mean 95CI, eval=FALSE, echo=FALSE, include=FALSE}
-ggsave("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Fig SX JCI revised WGCNA beeswarm plots with mean 95CIs.pdf", all_scat_plot, device = "pdf", units = "in", height = 4, width = 5.5)
+ggsave("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Fig S3A JCI revised WGCNA beeswarm plots with mean 95CIs.pdf", all_scat_plot, device = "pdf", units = "in", height = 4, width = 5.5)
 ```
 
 ```{r 1.8x10^6 PfSPZ only dataset, eval=FALSE, echo=FALSE, include=FALSE}
@@ -740,8 +753,7 @@ WGCNA_dat_select2$EFHD2 <- WGCNA_dat_select$MElavenderblush2
 WGCNA_dat_select2$RIOK3_CSDE1_SEC62 <- data.table::rbindlist(list(WGCNA_dat_select$MEskyblue1,
                                                 WGCNA_dat_select$MEmediumpurple1,
                                                 WGCNA_dat_select$MEthistle3)) %>%
-  as.data.frame() %>%
-  rename(kMEMEall = "kMEMEskyblue1")
+  as.data.frame() 
 for(k in names(WGCNA_dat_select2)){
   WGCNA_dat_select2[[k]] <- WGCNA_dat_select2[[k]][order(WGCNA_dat_select2[[k]][,2], decreasing = TRUE),]
   ORA_baseline_bound_df[[k]] <- ApplyORA2Genesets(genelist = WGCNA_dat_select2[[k]]$GeneSymbol,
@@ -854,6 +866,10 @@ myArrangedPlot <- myORAClusterPlotDat %>%
 print(myArrangedPlot)
 ```
 
+```{r save fig 2c data, include=FALSE, eval=FALSE, echo=FALSE}
+myArrangedPlot$data %>%
+  writexl::write_xlsx("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 2C Baseline WCGNA Module-Trait Association Network ORA Barplot.xlsx")
+```
 
 ```{r output plot, echo=FALSE, eval=FALSE, include=FALSE}
 cairo_pdf(filename = "/Users/tuantran/OneDrive - Indiana University/FromGoogle/Manuscripts/KSPZV1 Manuscript/JCI Submission November 2022/Figures for JCI submission/Figure 2C Revised to ORA.pdf", width = 5, height = 4)

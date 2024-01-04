@@ -55,38 +55,42 @@ schmiedel <- read.table(file = dl$local_path, sep = '\t', header = TRUE, check.n
 ```{r filter bulk RNAseq datasets for FSTL4,  message=FALSE, warning=FALSE}
 #HPA_blood
 hpa_blood <- hpa_blood %>% 
-  dplyr::rename(Gene_name = "Gene name") %>% 
-  filter(Gene_name %in% "FSTL4") %>%
-  dplyr::select(c(2,3,5))
+  dplyr::rename(gene_name = "Gene name",
+                immune_cell = "Immune cell") %>%
+  filter(gene_name %in% "FSTL4") %>%
+  dplyr::select(c(immune_cell, TPM))
 
 #Schmiedel
-
 schmiedel <- schmiedel %>% 
-  dplyr::rename(Gene_name = "Gene name") %>% 
-  filter(Gene_name %in% "FSTL4") %>%
-  dplyr::select(c(2,3,4))
+  dplyr::rename(gene_name = "Gene name",
+                immune_cell = "Immune cell") %>%
+  filter(gene_name %in% "FSTL4") %>%
+  dplyr::select(c(immune_cell, TPM))
 
 #Monaco
 monaco <- monaco %>% 
-  dplyr::rename(Gene_name = "Gene name") %>% 
-  filter(Gene_name %in% "FSTL4") %>%
-  dplyr::select(c(2,3,5))
+  dplyr::rename(gene_name = "Gene name",
+                immune_cell = "Immune cell") %>%
+  filter(gene_name %in% "FSTL4") %>%
+  dplyr::select(c(immune_cell, TPM))
 ```
 
 ### Step 5: Harmonize blood cell names in the datasets to merge them accurately
 
 ```{r change names to harmonize datasets,  message=FALSE, warning=FALSE}
-#HPA
-#hpa_blood <- hpa_blood[-c(3,19),]
-hpa_blood[hpa_blood=="memory CD4 T-cell"]<-"Memory CD4 T-cell Th1"
-hpa_blood[hpa_blood=="memory CD8 T-cell"]<-"Central memory CD8 T-cell"
+common_cells <- intersect(hpa_blood$immune_cell, intersect(monaco$immune_cell, schmiedel$immune_cell))
+hpa_unique_cells <- setdiff(hpa_blood$immune_cell, c(monaco$immune_cell, schmiedel$immune_cell))
+monaco_unique_cells <- setdiff(monaco$immune_cell, c(hpa_blood$immune_cell, schmiedel$immune_cell))
+schmiedel_unique_cells <- setdiff(schmiedel$immune_cell, c(monaco$immune_cell, hpa_blood$immune_cell))
 
-#Monaco
-#monaco <- monaco[-c(24,27, 28,29),]
-
-#Schmiedel
-#schmiedel <- schmiedel[-c(7, 10, 12), ]
-schmiedel[schmiedel=="Naive T-reg"] <- "T-reg"
+alldat <- hpa_blood %>%
+  dplyr::rename(hpa = "TPM") %>%
+  full_join(., monaco %>%
+              dplyr::rename(monaco = "TPM"),
+            by = c("immune_cell")) %>%
+  full_join(., schmiedel %>%
+              dplyr::rename(schmiedel = "TPM"),
+            by = c("immune_cell"))
 ```
 
 ### Step 6: Merge the datasets together
@@ -103,7 +107,7 @@ b <- b[,-4]
 # Step 7: Arrange the blood cells in the order they will be shown in the heatmap and modify names
 
 ```{r final clean up,  message=FALSE, warning=FALSE}
-alldat <-b %>%
+alldat <- b %>%
   arrange(factor(`Immune cell`, levels = c("basophil", "neutrophil","classical monocyte","intermediate monocyte",  "non-classical monocyte", "NK-cell", "myeloid DC", "plasmacytoid DC", "MAIT T-cell", "B cell progenitor", "naive B-cell", "Non-switched memory B-cell", "Switched memory B-cell", "Exhausted memory B-cell", "Plasmablast", "naive CD4 T-cell", "Memory CD4 T-cell TFH", "Memory CD4 T-cell Th1", "Memory CD4 T-cell Th1/Th17", "Memory CD4 T-cell Th17", "Memory CD4 T-cell Th2", "naive CD8 T-cell", "Central memory CD8 T-cell", "Effector memory CD8 T-cell", "T-reg", "Vd2 gdTCR", "Non-Vd2 gdTCR")))
 alldat <- alldat[-c(27:28),]
 
@@ -138,13 +142,15 @@ alldat[alldat == "Vd2 gdTCR"]<-"Vδ2 γδTCR"
 alldat[alldat == "Non-Vd2 gdTCR"]<-"Non-δ2 γδTCR"
 
 # create rownames 
+alldat <- alldat %>%
+  distinct(c(1:4))
 row.names(alldat) <- alldat[,1]
 alldat <- alldat[,-1]
 
 # Rename the columns
-alldat<-alldat %>% 
-  dplyr::rename("Monaco et al. (GEO: GSE107011)"="pTPM_Monaco")%>%
-  dplyr::rename("Uhlén et al. (HPA: www.proteinatlas.org)"="pTPM_HPA")%>%
+alldat <- alldat %>%
+  dplyr::rename("Monaco et al. (GEO: GSE107011)"="pTPM_Monaco") %>%
+  dplyr::rename("Uhlén et al. (HPA: www.proteinatlas.org)"="pTPM_HPA") %>%
   dplyr::rename("Schmiedel et al. (dbGAP: phs001703.v1.p1)"="Schmiedel")
   
 # reorder the columns
