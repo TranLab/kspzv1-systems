@@ -85,7 +85,6 @@ for(j in c("unst + L9LS","LPS","LPS + L9LS", "flagellin","beta-glucan", "poly I:
       df[[i]] <- mydat_bound[[i]] %>%
         as.data.frame() 
       
-      
 ## following if-else sequences sets references         
         if (i == "Mono + Cryo PfSPZ" & j == "unst + L9LS")
                 temp[[i]][[j]] <- df[[i]] %>%
@@ -255,6 +254,10 @@ spz_pretreat_res_df <- data.frame("Experiment_type" = "fresh mono + Cryo PfSPZ",
                                   "plot_type" = "Mono + Cryo PfSPZ fresh cells")
 ```
 
+```{r save propdat, include=FALSE, echo=FALSE, eval=FALSE}
+writexl::write_xlsx(propdat, "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 8F Data for Phagocytosis OR forest plots.xlsx")
+```
+
 ```{r bind to allfests, eval=FALSE, include=FALSE, echo=FALSE}
 #Bind new data to allfets
 allfets_plus_new <- bind_rows(allfets, spz_pretreat_res_df) %>%
@@ -387,6 +390,15 @@ cairo_pdf(paste0(tempdir,"Fig 7F Phagocytosis Odds Ratio Forest Plot with PfSPZ 
 fig_7F
 dev.off()
 ```
+
+
+```{r combine all plot types and save data, echo=FALSE, eval=FALSE, include=FALSE}
+all_plot_types <- bind_rows(thp.plot$data, alltreat.plot$data, PfSPZ_pretreat_plot$data, L9LS.plot$data)
+
+all_plot_types %>%
+  writexl::write_xlsx("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 8F Phagocytosis Odds Ratios.xlsx")
+```
+
 
 ### Effect of purified PfSPZ pre-treatment on PfSPZ phagocytosis by freshly isolate human monocytes
 

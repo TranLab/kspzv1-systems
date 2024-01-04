@@ -1,0 +1,331 @@
+---
+title: "KSPZV1 Baseline Multimodal ML revised - xgboost nested feature selection and cv FULL DATASET"
+author: "Tuan M. Tran"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document :
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r links discussing approaches, include=FALSE, eval=FALSE}
+#Links discussing best approaches:
+# https://stats.stackexchange.com/questions/264533/how-should-feature-selection-and-hyperparameter-optimization-be-ordered-in-the-m
+```
+
+# Objective
+
+Performing training and cross-validation on full dataset
+
+# Approach
+
+1. Perform training using xgboost with hyperparameter tuning with 4-fold cross-validation using random search strategy in 2500 runs on full dataset.
+2. For each run:
+  a. manually split the training and validation set 3:1 (47:16) using a random seed
+  b. use xgb.train on the training set with hyperparameter tuning
+  c. determine feature importance and randomly select 3 to 7 of the top 7-10 features based on gain
+  d. validate these selected features on the test set using the caret confusionMatrix function, which provides prediction accuracy, sensitivity, and specificity
+  e. use pROC::roc function to get auc (https://stackoverflow.com/questions/44228137/auc-from-averaged-class-probabilities-in-caret-r)
+  f. for each run, record the features, accuracy, error rate [(FP+FN)/total or 1-accuracy], sensitivity, specificity, and auc
+3. Repeat step 2 for 2500 runs
+4. Calculate mean test AUC and mean test accuracy across all 4 folds.
+5. Rank the feature combinations by highest test AUC mean and highest test accuracy mean.
+
+
+```{r libraries, include=FALSE}
+library(openxlsx)
+library(xgboost)
+library(dplyr)
+library(tidyverse)
+library(fgsea)
+library(glmnet)
+library(pROC)
+library(aod)
+library(caret)
+library(limma)
+library(caTools)
+library(e1071)
+library(robustbase)
+library(Biobase)
+library(doMC)
+library(randomForest)
+library(data.table)
+```
+
+```{r set local paths}
+datadir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/kspzv1-systems-analysis/"
+plotdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/"
+```
+
+```{r read in full dataset}
+complete_baseline_eset <- read_rds(paste0(datadir, "KSPZV1 logCPM expression sets for visualization/PfSPZ_cpm_ExpressionSet_244x21815_AllGroups_bothBatches_0_rmBatchFX_06082021_TMT_logTRUE.rds"))
+
+high_dose_features <- read_rds(paste0(datadir,"Leetah ML code/kspzv1_hidose_imputed_ml_datasetfull_042123.RDS"))
+high_dose_baseline_eset <- complete_baseline_eset[,which(complete_baseline_eset$SAMPLEID %in% colnames(high_dose_features))]
+```
+
+```{r make highdose features}
+##before splitting, we want to join the classification variable and additional variables of interest to the features data
+high_dose_features_class <- t(high_dose_features) %>%
+  data.frame(check.names=FALSE) %>%
+  rownames_to_column(var = "SAMPLEID") %>%
+  left_join(., pData(high_dose_baseline_eset) %>%
+              mutate(class = factor(ifelse(mal.atp.3 == 1, "infected", "protected"))) %>% #convert to class factor with reference as "infected"
+              dplyr::select(SAMPLEID, site, SEX, age.vax1, mal.vax.1, class) %>%
+              dplyr::rename(sex = "SEX",
+                            age = "age.vax1",
+                            pfbaseline = mal.vax.1),
+            by = "SAMPLEID") %>%
+  dplyr::select(class, sex, site, pfbaseline, age, everything()) %>%
+  column_to_rownames(var = "SAMPLEID")
+
+if(all(rownames(high_dose_features_class) == colnames(high_dose_baseline_eset))){
+  print("good to go!")
+} else {
+    print("please check to see if colnames match.")
+  }
+```
+### Select options
+
+```{r select options}
+train_on_split_or_full_set <- "full" #options: original_split, split, full
+```
+
+```{r split test and train}
+myseed <- sample(1:5000,1)
+set.seed(myseed) #set seed for reproducibility
+  print(paste0("Will train and cross-validate with nested feature selection on full high dose PfSPZ dataset which consists of ", ncol(high_dose_baseline_eset), " samples and ", ncol(high_dose_features_class), " features."))
+```
+
+## Use xgboost for both feature selection and training model. Use caret and pROC for cross-validation.
+
+```{r use mlr3 package set parameters and resampling strategy, message=FALSE}
+library(mlr)
+library(mlr3)
+#https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+
+#create learner
+lrn <- makeLearner("classif.xgboost",
+                   objective="binary:logistic",
+                   nrounds=1000,
+                   early_stopping_rounds = 100,
+                   eval_metric="error",
+                   predict.type = "response")
+
+#set parameter space
+#https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+#https://www.kaggle.com/code/prashant111/a-guide-on-xgboost-hyperparameters-tuning
+params <- makeParamSet(makeDiscreteParam("booster", values = c("gbtree")),
+                       makeIntegerParam("gamma",lower = 0L,upper = 3L),
+                       makeIntegerParam("max_depth",lower = 2L,upper = 5L),
+                       makeNumericParam("eta",lower = 0.01,upper = 0.2),
+                       makeNumericParam("min_child_weight",lower = 0L,upper = 8L),
+                       makeNumericParam("subsample",lower = 0.75,upper = 0.9),
+                       makeNumericParam("lambda",lower = 0, upper = 1),
+                       makeNumericParam("alpha",lower = 0, upper = 1),
+                       makeNumericParam("colsample_bytree",lower = 0.5,upper = 1))
+
+#set resampling strategy
+rdesc <- makeResampleDesc(method = "CV",
+                          predict = "test",
+                          iters = 4,
+                          stratify = T)
+```
+
+```{r hyperparameter tuning to select best features loop set up and options}
+#set parallel backend.  
+library(parallel)
+library(parallelMap)
+library(tictoc)
+parallelStartSocket(cpus = detectCores())
+
+#set options
+maxiterations <- 500 #number of iterations for each run of hyperparameter tuning
+runs <- 2500 #number of runs
+n_folds <- 4
+n_feat_sampled <- 3:7 #range for number of features sampled
+ctrl <- makeTuneControlRandom(maxit = maxiterations)
+```
+ 
+The following code sources a custom function ("kspzv1 xgboost manual train and cv function.R") to run feature selection and cross validation x times for every fold of cross-validation.
+
+
+```{r source function and make fold objects}
+source("~/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/kspzv1-systems-analysis/kspzv1 xgboost manual train and cv function.R")
+
+fold1 <- fold2 <- fold3 <- fold4 <- c()
+#if starting from prior session
+load(paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+            "full_high_dose_4fold_cv_2250_runs/all_folds_data_seed_741_runs_2250_19_Aug_2023_full.RData"))
+```
+
+```{r run fs and cv loop}
+tic(msg = paste0("total for ", runs, " total runs"))
+for(i in 2251:2500){
+  run_seed <- sample(1:1e4,1)
+  # Splitting data in training and validation sets
+  set.seed(run_seed) #set seed for run
+  tic(msg = paste0("first fold in ", i, " run of ,", runs," total runs"))
+  #run first fold
+  split <- sample.split(colnames(high_dose_baseline_eset), SplitRatio = (n_folds-1)/n_folds)
+  
+  train_eset_fold1 <- high_dose_baseline_eset[,split==TRUE]
+  train_samples_fold1 <- colnames(train_eset_fold1)
+  train_features_fold1 <- high_dose_features_class[split==TRUE,] %>%
+    dplyr::select(-c(sex,site))
+  
+  validation_eset_fold1 <- high_dose_baseline_eset[,split==FALSE]
+  validation_samples_fold1 <- colnames(validation_eset_fold1)
+  validation_features_fold1 <- high_dose_features_class[split==FALSE,] %>%
+    dplyr::select(-c(sex,site))
+  
+  #following if else statement checks to see if split results in single-level outcome in validation set. Does this 2 times (just in case!).
+  if(nlevels(validation_features_fold1$class)==1){
+    run_new_seed <- sample(1e4:2e4,1)
+    # Splitting data in training and validation sets
+    set.seed(run_new_seed) #set seed for run
+    split <- sample.split(colnames(high_dose_baseline_eset), SplitRatio = (n_folds-1)/n_folds)
+    train_eset_fold1 <- high_dose_baseline_eset[,split==TRUE]
+    train_samples_fold1 <- colnames(train_eset_fold1)
+    train_features_fold1 <- high_dose_features_class[split==TRUE,] %>%
+      dplyr::select(-c(sex,site))
+    validation_eset_fold1 <- high_dose_baseline_eset[,split==FALSE]
+    validation_samples_fold1 <- colnames(validation_eset_fold1)
+    validation_features_fold1 <- high_dose_features_class[split==FALSE,] %>%
+      dplyr::select(-c(sex,site))
+    }
+  if(nlevels(validation_features_fold1$class)==1){
+    run_newer_seed <- sample(2e4:3e4,1)
+    # Splitting data in training and validation sets
+    set.seed(run_newer_seed) #set seed for run
+    split <- sample.split(colnames(high_dose_baseline_eset), SplitRatio = (n_folds-1)/n_folds)
+    train_eset_fold1 <- high_dose_baseline_eset[,split==TRUE]
+    train_samples_fold1 <- colnames(train_eset_fold1)
+    train_features_fold1 <- high_dose_features_class[split==TRUE,] %>%
+      dplyr::select(-c(sex,site))
+    validation_eset_fold1 <- high_dose_baseline_eset[,split==FALSE]
+    validation_samples_fold1 <- colnames(validation_eset_fold1)
+    validation_features_fold1 <- high_dose_features_class[split==FALSE,] %>%
+      dplyr::select(-c(sex,site))
+    }
+  
+  fold1[[i]] <- xgb_train_and_cv(train_features = train_features_fold1, validation_features = validation_features_fold1)
+  names(fold1)[i] <- paste0("run ", i)
+  toc()
+  
+  #begin second fold of cross-validation
+  tic(msg = paste0("second fold in ", i, " run of ", runs," total runs"))
+  validation_samples_fold2 <- sample(train_samples_fold1,
+                                    size = length(validation_samples_fold1))
+  validation_features_fold2 <- high_dose_features_class[validation_samples_fold2,] %>%
+      dplyr::select(-c(sex,site))
+  train_samples_fold2 <- setdiff(colnames(high_dose_baseline_eset), validation_samples_fold2)
+  train_features_fold2 <- high_dose_features_class[train_samples_fold2,] %>%
+      dplyr::select(-c(sex,site))
+  fold2[[i]] <- xgb_train_and_cv_on_selected_features(train_features = train_features_fold2,
+                                                      validation_features = validation_features_fold2,
+                                                      features_to_test = fold1[[i]]$downselected_xgb_results$feature_names)
+  names(fold2)[i] <- paste0("run ", i)
+  toc()
+  
+  #begin third fold of cross-validation
+  tic(msg = paste0("third fold in ", i, " run of ", runs," total runs"))
+  validation_samples_fold3 <- sample(setdiff(colnames(high_dose_baseline_eset), c(validation_samples_fold1,
+                                                                                 validation_samples_fold2)),
+                                    size = length(validation_samples_fold1))
+  validation_features_fold3 <- high_dose_features_class[validation_samples_fold3,] %>%
+      dplyr::select(-c(sex,site))
+  train_samples_fold3 <- setdiff(colnames(high_dose_baseline_eset), validation_samples_fold3)
+  train_features_fold3 <- high_dose_features_class[train_samples_fold3,] %>%
+      dplyr::select(-c(sex,site))
+  fold3[[i]] <- xgb_train_and_cv_on_selected_features(train_features = train_features_fold3,
+                                                      validation_features = validation_features_fold3,
+                                                      features_to_test = fold1[[i]]$downselected_xgb_results$feature_names)
+  names(fold3)[i] <- paste0("run ", i)
+  toc()
+  
+  #begin fourth fold of cross-validation
+  tic(msg = paste0("fourth fold in ", i, " run of ", runs," total runs"))
+  validation_samples_fold4 <- setdiff(colnames(high_dose_baseline_eset), c(validation_samples_fold1,
+                                                                          validation_samples_fold2,
+                                                                          validation_samples_fold3))
+  validation_features_fold4 <- high_dose_features_class[validation_samples_fold4,] %>%
+      dplyr::select(-c(sex,site))
+  train_samples_fold4 <- setdiff(colnames(high_dose_baseline_eset), validation_samples_fold3)
+  train_features_fold4 <- high_dose_features_class[train_samples_fold4,] %>%
+      dplyr::select(-c(sex,site))
+  fold4[[i]] <- xgb_train_and_cv_on_selected_features(train_features = train_features_fold4,
+                                                      validation_features = validation_features_fold4,
+                                                      features_to_test = fold1[[i]]$downselected_xgb_results$feature_names)
+  names(fold4)[i] <- paste0("run ", i)
+  toc()
+  }
+toc()
+```
+
+```{r load all folds data from local}
+load(paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+            "full_high_dose_4fold_cv_2500_runs/all_folds_data_seed_1943_runs_2500_19_Aug_2023_full.RData"))
+```
+
+```{r combine results from all folds}
+validation_res_list <- c()
+for(i in 1:length(fold4)){
+  validation_res_list[[i]] <- bind_rows(fold1[[i]]$validation_results %>%
+                                          mutate(fold = 1) %>%
+                                          dplyr::select(fold, everything()),
+                                        fold2[[i]]$validation_results %>%
+                                          mutate(fold = 2) %>%
+                                          dplyr::select(fold, everything()),
+                                        fold3[[i]]$validation_results %>%
+                                          mutate(fold = 3) %>%
+                                          dplyr::select(fold, everything()),
+                                        fold4[[i]]$validation_results %>%
+                                          mutate(fold = 4) %>%
+                                          dplyr::select(fold, everything()))
+  }
+names(validation_res_list) <- paste0("run ", 1:length(fold4))
+validation_res_df <- bind_rows(validation_res_list, .id="run")
+
+validation_summarized_res_df <- validation_res_df %>%
+  dplyr::select(run, Features, AUC, Accuracy) %>%
+  group_by(run, Features) %>%
+  summarize(mean_cv_AUC = mean(AUC),
+            sd_cv_AUC = sd(AUC),
+            mean_cv_accuracy = mean(Accuracy),
+            sd_cv_accuracy = sd(Accuracy)) %>%
+  arrange(desc(mean_cv_AUC))
+```
+
+
+```{r save results of crossvalidation}
+save(fold1, fold2, fold3, fold4,
+       file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                     "full_high_dose_4fold_cv_", length(fold4), "_runs/",
+                     "all_folds_data_", "seed_", myseed, "_runs_", i, "_",
+                     gsub("\\:","-", format(Sys.Date(),"%d_%b_%Y")), "_", train_on_split_or_full_set, ".RData"))
+
+writexl::write_xlsx(validation_res_df,
+                    path = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                             "full_high_dose_4fold_cv_", length(fold4), "_runs/",
+                                             "cv_results_all_runs_all_folds_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                             gsub("\\:","-", format(Sys.Date(),"%d_%b_%Y")), "_", train_on_split_or_full_set, ".xlsx"))
+
+writexl::write_xlsx(validation_summarized_res_df,
+                    path = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                             "full_high_dose_4fold_cv_", length(fold4), "_runs/",
+                                             "cv_summarized_res_all_folds_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                             gsub("\\:","-", format(Sys.Date(),"%d_%b_%Y")), "_", train_on_split_or_full_set, ".xlsx"))
+
+validation_summarized_res_df %>%
+  ungroup() %>%
+  dplyr::arrange(desc(mean_cv_accuracy)) %>%
+  slice_head(n = 100) %>%
+  writexl::write_xlsx(.,
+                      path = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                    "full_high_dose_4fold_cv_", length(fold4), "_runs/",
+                                    "cv_top_100_summarized_res_all_folds_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                             gsub("\\:","-", format(Sys.Date(),"%d_%b_%Y")), "_", train_on_split_or_full_set, ".xlsx"))
+```

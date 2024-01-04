@@ -1,12 +1,17 @@
 ---
 title: "KSPZV1 Baseline Innate CD8 Postvax Revision"
 author: "Tuan M. Tran"
-date: "2023-11-25"
-output: html_document
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document :
+    theme: cerulean
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load libraries, include=TRUE, warning=FALSE, message=FALSE}
 library(ggplot2)
 library(tidyverse)
 library(googledrive)
@@ -24,7 +29,7 @@ addSmallLegend <- function(myPlot, pointSize = 6, textSize = 6, spaceLegend = 1)
 
 ## Objective
 
-Addresses review 2 question to more directly show that innate activation limits CD8+ T cell responses in humans.
+Addresses a reviewer question to more directly show that innate activation limits CD8+ T cell responses in humans.
 
 Main approach is to perform edgeR DGE followed by GSEA using baseline transcriptomes and the following comparison:
 PfSPZ-specific CD8 T cell detectable vs non-detectable at 2 weeks post-vax.
@@ -33,7 +38,7 @@ Alternative approach is similar to what as done for CSP-specific antibody respon
 Correlate every baseline gene with PfSPZ-specific CD8+ and then perform GSEA.
 
 
-## Method 1: Differential Gene Expression Analysis
+### Differential Gene Expression Analysis
 
 ```{r load SeqExpressionSet 2, message=FALSE, warning=FALSE}
 #from google drive
@@ -164,8 +169,7 @@ for(i in names(ygroup)){
 }
 ```
 
-### Analysis between Not Protected and Protected within a Dose Group
-
+### Analysis between Detected and Not Detected within a Dose Group
 
 ```{r, build design matrix protected vs not protected by group, message=FALSE, warning=FALSE}
 degtab <- setNames(as.list(c(1:2)), c("Placebo", "1.8 x 10^6 PfSPZ"))
@@ -267,7 +271,7 @@ myGSEAClusterPlotDat <- GSEAtab %>%
   droplevels()
 ```
 
-```{r print GSEA detected vs not detected bubble plot, fig.align='center', fig.height=7, fig.width=9, fig.align='center', echo=FALSE}
+```{r print GSEA detected vs not detected bubble plot, fig.align='center', fig.height=4, fig.width=5, fig.align='center', echo=TRUE, message=FALSE, warning=FALSE}
 #plotting options
 basetextsize <- 8  
 myfont <- "Helvetica"
@@ -292,12 +296,22 @@ myGSEA_bubble_plot <- myGSEAClusterPlotDat %>%
         axis.text.y = element_text(color = "black")) +
 facet_wrap(~module_type, scales = "free_y", nrow = 2, strip.position = "right")
 
-cairo_pdf(filename = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Figure Panels/Fig 7X Detected vs not detected GSEA PfSPZ CD8 edgeR placebo highdose PfSPZ hiBTMs bbubbleplot.pdf", width = 4.5, height = 3)
 addSmallLegend(myGSEA_bubble_plot)
-dev.off
 ```
 
-```{r print GSEA detected vs not detected bar plot, fig.align='center', fig.height=7, fig.width=9, fig.align='center', echo=FALSE}
+
+```{r save to pdf, include=FALSE, echo=FALSE, eval=FALSE}
+cairo_pdf(filename = "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Figure Panels/Fig 7A Detected vs not detected GSEA PfSPZ CD8 edgeR placebo highdose PfSPZ hiBTMs bbubbleplot.pdf", width = 4.5, height = 3)
+addSmallLegend(myGSEA_bubble_plot)
+dev.off()
+```
+
+```{r save fig 7a plot data, include=FALSE, eval=FALSE, echo=FALSE}
+myGSEA_bubble_plot$data %>%
+  writexl::write_xlsx("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 7A baseline GSEA CD8 responder vs non-responder.xlsx")
+```
+
+```{r print GSEA detected vs not detected bar plot, fig.align='center', fig.height=7, fig.width=9, fig.align='center', include=FALSE, echo=FALSE, eval=FALSE}
 
 myGSEAClusterPlot <- myGSEAClusterPlotDat %>%
   ggplot(., aes(x = NES, y = pathway, fill = neglogpadj)) +
@@ -314,11 +328,10 @@ print(addSmallLegend(myGSEAClusterPlot))
 dev.off
 ```
 
+```{r load cpm eset, message=FALSE, warning=FALSE, include=FALSE, echo=FALSE, eval=FALSE}
 ## Method #2: Correlate baseline gene expression to PfSPZ CD8 T cells at 2 weeks then apply GSEAS
 
 ## Load ExpressionSet
-
-```{r load cpm eset, message=FALSE, warning=FALSE}
 #local
 #x	<-	readRDS("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/KSPZV1 logCPM expression sets for visualization/PfSPZ_cpm_ExpressionSet_244x21815_AllGroups_bothBatches_0_rmBatchFX_06082021_TMT_logTRUE.rds")
 #from google drive
@@ -332,7 +345,7 @@ x$treat <- factor(x$treat, levels = c("Placebo", "4.5 x 10^5 PfSPZ", "9.0 x 10^5
 pData(x) <- droplevels(pData(x))
 ```
 
-```{r read in FACS and assess CD8s, fig.align='center', fig.height=10, fig.width=8}
+```{r read in FACS and assess CD8s 2, fig.align='center', fig.height=10, fig.width=8, include=FALSE, echo=FALSE, eval=FALSE}
 alldat <- readRDS(file = "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/Final Data Files/PfSPZ_FACS_PlasmaCytokine_MonocyteActivation_03312021.Rds") %>%
   column_to_rownames(var = "PATID.OG") %>%
   mutate_if(is.character,as.numeric) %>%
@@ -387,7 +400,7 @@ table(pfspz_cd8_vax_only$cd8_25_greater_0, pfspz_cd8_vax_only$Outcome)
 ```
 
 
-```{r combine facs with gene expression}
+```{r combine facs with gene expression, include=FALSE, echo=FALSE, eval=FALSE}
 combo_dat <- pfspz_cd8 %>%
   left_join(., exprs(x) %>%
               t() %>%
@@ -440,9 +453,8 @@ for(h in names(summary(combo_dat$dose_group))){
   
 ```
 
+```{r apply fgsea 2, warning=FALSE, message=FALSE, include=FALSE, echo=FALSE, eval=FALSE}
 ### Apply GSEA
-
-```{r apply fgsea, warning=FALSE, message=FALSE}
 devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/NamedGeneRankList2GseaTable.R?raw=TRUE")
 res <- ranks <- bound_df_GSEA <- c()
 for(h in names(summary(combo_dat$dose_group))){
@@ -462,11 +474,11 @@ for(h in names(summary(combo_dat$dose_group))){
 bound_df_GSEA_all <- bind_rows(bound_df_GSEA, .id = "dose_group")
 ```
 
+```{r arrange data for plots, include=FALSE, echo=FALSE, eval=FALSE}
 ### Plot GSEA results as bar plot
 
-Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and log2FC of % PfSPZ-specific CD8 of lymphocytes at 2-weeks post-vaccination.
+#Gene set enrichment analysis (GSEA) using genes ranked by magnitude and significance of correlation between baseline expression and log2FC of % PfSPZ-specific CD8 of lymphocytes at 2-weeks post-vaccination.
 
-```{r arrange data for plots, echo = FALSE}
 myfunction <- function(leadingEdge) { length(unlist(strsplit(leadingEdge, ", "))) }
 myFDRcutoff <- 0.01
 
@@ -508,7 +520,7 @@ myGSEAClusterPlot <- myGSEAClusterPlotDat %>%
   facet_wrap(~relevel(dose_group, ref = "1.8 x 10^6 PfSPZ"), ncol = 2)
 ```
 
-```{r print GSEA plot, fig.align='center', fig.height=7, fig.width=9, fig.align='center', echo=FALSE}
+```{r print GSEA plot, fig.align='center', fig.height=7, fig.width=9, fig.align='center', include=FALSE, echo=FALSE, eval=FALSE}
 addSmallLegend <- function(myPlot, pointSize = 6, textSize = 6, spaceLegend = 1) {
     myPlot +
         guides(shape = guide_legend(override.aes = list(size = pointSize)),
@@ -523,11 +535,12 @@ print(addSmallLegend(myGSEAClusterPlot))
 dev.off
 ```
 
+
+
+```{r collapse, include=FALSE, echo=FALSE, eval=FALSE}
 ## Module Expression Scores Method
 
 ### Collapse to Pathway Activity Scores
-
-```{r collapse, echo=FALSE}
 devtools::source_url("https://github.com/TranLab/ModuleLists/blob/main/Gene2ModuleExpressionScores.R?raw=TRUE")
 lowBTM_dat <- Gene2ModuleExpressionScores(gene_expression_dat = x, module_list = "lowBTMs", summary_stat = median)
 hiBTM_dat <- Gene2ModuleExpressionScores(gene_expression_dat = x, module_list = "highBTMs", summary_stat = median)
@@ -549,9 +562,8 @@ hiBTM_dat <- Gene2ModuleExpressionScores(gene_expression_dat = x, module_list = 
 # dim(hiBTM_dat_filtered)
 ```
 
+```{r convert MES to long format, include=FALSE, echo=FALSE, eval=FALSE}
 ### Read in FACS and merge with BTMs
-
-```{r convert MES to long format }
 hiBTM_dat_long <- hiBTM_dat_filtered %>%
   as.matrix() %>%
   scale() %>%
@@ -569,7 +581,7 @@ lowBTM_dat_long <- lowBTM_dat_filtered %>%
   mutate(PATID = gsub("_.*", "", PATID))
 ```
 
-```{r make combo}
+```{r make combo, include=FALSE, echo=FALSE, eval=FALSE}
 combo <- alldat %>%
   left_join(., hiBTM_dat_long,
             by = "PATID") %>%
@@ -602,12 +614,11 @@ combo <- combo_0 %>%
          zscore_value_25 = scale(value_25))
 ```
 
-
+```{r plot, fig.align='center', fig.width=10, fig.height=6, include=FALSE, echo=FALSE, eval=FALSE}
 ### Plot relationship between baseline inflammatory signatures and PfSPZ-specific CD8
 
-high BTMs
+#high BTMs
 
-```{r plot, fig.align='center', fig.width=10, fig.height=6}
 library(ggpubr)
 options(scipen=999) # no scientific notation
 
@@ -622,9 +633,9 @@ combo %>%
   facet_grid(feature~module, scales = "free")
 ```
 
-low BTMs
+```{r plot 2, fig.align='center', fig.width=10, fig.height=60, include=FALSE, echo=FALSE, eval=FALSE}
+#low BTMs
 
-```{r plot 2, fig.align='center', fig.width=10, fig.height=60}
 library(ggpubr)
 options(scipen=999) # no scientific notation
 combo %>%

@@ -1,0 +1,2194 @@
+---
+title: "KSPZV1 Baseline Multimodal ML revised - xgboost for feature selection and cv"
+author: "Leetah Senkpeil and Tuan M. Tran"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document :
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r links discussing approaches, include=FALSE, eval=FALSE}
+#Links discussing best approaches:
+# https://stats.stackexchange.com/questions/264533/how-should-feature-selection-and-hyperparameter-optimization-be-ordered-in-the-m
+```
+
+# Objective
+
+Train on 2/3 of the dataset and test on remaining 1/3 held out.
+
+# Approach
+
+1. Sample 2/3 of the dataset using a random seed. Capture seed and subjects partitioned into training and test set.
+2. Perform training using xgboost with hyperparameter tuning with 4-fold cross-validation using random search strategy in 500 runs
+3. For each run, the optimal hyperparameter was selected, and the feature importance scores were recorded. The top ten features in order of importance are retained for each of the 500 runs. Features are then ranked by number of appearances in the top ten across the 500 runs.
+4. Again using only the training sets, 3 to 7 features were sub-sampled from the features appearing in at least 50 times in 500 runs (>=10%), and the training was again run using these subsampled, downselected features. The same approach noted in #2 above was used except that performance metric was AUC.
+
+```{r libraries, include=FALSE}
+library(openxlsx)
+library(xgboost)
+library(dplyr)
+library(tidyverse)
+library(fgsea)
+library(glmnet)
+library(pROC)
+library(aod)
+library(caret)
+library(limma)
+library(caTools)
+library(e1071)
+library(robustbase)
+library(Biobase)
+library(doMC)
+library(randomForest)
+library(data.table)
+```
+
+```{r set local paths}
+datadir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/kspzv1-systems-analysis/"
+plotdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/"
+```
+
+```{r read in full dataset}
+complete_baseline_eset <- read_rds(paste0(datadir, "KSPZV1 logCPM expression sets for visualization/PfSPZ_cpm_ExpressionSet_244x21815_AllGroups_bothBatches_0_rmBatchFX_06082021_TMT_logTRUE.rds"))
+
+high_dose_features <- read_rds(paste0(datadir,"Leetah ML code/kspzv1_hidose_imputed_ml_datasetfull_042123.RDS"))
+high_dose_baseline_eset <- complete_baseline_eset[,which(complete_baseline_eset$SAMPLEID %in% colnames(high_dose_features))]
+
+placebo_features <- read_rds(paste0(datadir,"Leetah ML code/kspzv1_placebo_imputed_ml_datasetfull_042123.RDS"))
+placebo_baseline_eset <- complete_baseline_eset[,which(complete_baseline_eset$SAMPLEID %in% colnames(placebo_features))]
+```
+
+```{r make highdose features}
+##before splitting, we want to join the classification variable and additional variables of interest to the features data
+high_dose_features_class <- t(high_dose_features) %>%
+  data.frame(check.names=FALSE) %>%
+  rownames_to_column(var = "SAMPLEID") %>%
+  left_join(., pData(high_dose_baseline_eset) %>%
+              mutate(class = factor(ifelse(mal.atp.3 == 1, "infected", "protected"))) %>% #convert to class factor with reference as "infected"
+              dplyr::select(SAMPLEID, site, SEX, age.vax1, mal.vax.1, class) %>%
+              dplyr::rename(sex = "SEX",
+                            age = "age.vax1",
+                            pfbaseline = mal.vax.1),
+            by = "SAMPLEID") %>%
+  dplyr::select(class, sex, site, pfbaseline, age, everything()) %>%
+  column_to_rownames(var = "SAMPLEID")
+
+if(all(rownames(high_dose_features_class) == colnames(high_dose_baseline_eset))){
+  print("good to go!")
+} else {
+    print("please check to see if colnames match.")
+  }
+```
+
+```{r make placebo features}
+##before splitting, we want to join the classification variable and additional variables of interest to the features data
+placebo_features_class <- t(placebo_features) %>%
+  data.frame(check.names=FALSE) %>%
+  rownames_to_column(var = "SAMPLEID") %>%
+  left_join(., pData(placebo_baseline_eset) %>%
+              mutate(class = factor(ifelse(mal.atp.3 == 1, "infected", "protected"))) %>% #convert to class factor with reference as "infected"
+              dplyr::select(SAMPLEID, site, SEX, age.vax1, mal.vax.1, class) %>%
+              dplyr::rename(sex = "SEX",
+                            age = "age.vax1",
+                            pfbaseline = mal.vax.1),
+            by = "SAMPLEID") %>%
+  dplyr::select(class, sex, site, pfbaseline, age, everything()) %>%
+  column_to_rownames(var = "SAMPLEID")
+
+if(all(rownames(placebo_features_class) == colnames(placebo_baseline_eset))){
+  print("good to go!")
+} else {
+    print("please check to see if colnames match.")
+  }
+```
+
+### Select options
+
+```{r select options}
+train_on_split_or_full_set <- "split" #options: original_split, split, full
+```
+
+```{r split test and train}
+# high_dose_features_class <- pData(high_dose_baseline_eset) %>%
+#   dplyr::select(SAMPLEID, mal.atp.3) %>%
+#   mutate(class = factor(ifelse(mal.atp.3 == 1, "infected", "protected"))) %>% #convert to class factor with reference as "infected"
+#   dplyr::select(SAMPLEID, class) %>%
+#   left_join(., high_dose_features %>%
+#               t() %>%
+#               data.frame(check.names=FALSE) %>%
+#               rownames_to_column(var = "SAMPLEID"),
+#             by = "SAMPLEID") %>%
+#   column_to_rownames(var = "SAMPLEID")
+#check dataframe
+high_dose_features_class[1:6,1:6] 
+if(train_on_split_or_full_set == "split" | train_on_split_or_full_set == "full"){
+  myseed <- sample(1:5000,1)
+}
+if(train_on_split_or_full_set == "original_split"){
+  myseed <- 0623
+  }
+
+if(train_on_split_or_full_set != "split" &
+   train_on_split_or_full_set != "full" &
+   train_on_split_or_full_set != "original_split"){
+  print("train_on_split_or_full_set has to be either 'original_split', 'split', or 'full'")
+} else {
+  print(paste0("This model will train on '", train_on_split_or_full_set, "' dataset. Seed is ", myseed))
+}
+
+if(train_on_split_or_full_set == "split"){
+  # Splitting data in train and test data
+  set.seed(myseed) #set seed for reproducibility
+  split <- sample.split(colnames(high_dose_baseline_eset), SplitRatio = 0.667)
+  train_eset <- high_dose_baseline_eset[,split==TRUE]
+  test_eset <- high_dose_baseline_eset[,split==FALSE]
+  train_features <- high_dose_features_class[split==TRUE,]
+  test_features <- high_dose_features_class[split==FALSE,]
+  
+  print(paste0("Training set reduced to ", ncol(train_eset), " samples and ", ncol(train_features), " features."))
+  print(paste0("Test set reduced to ", ncol(train_features), " samples and ", ncol(test_features), " features."))
+
+}
+
+if(train_on_split_or_full_set == "full"){
+  # Splitting data in train and test data
+  set.seed(myseed) #set seed for reproducibility
+  train_eset <- high_dose_baseline_eset
+  test_eset <- NULL
+  train_features <- high_dose_features_class
+  test_features <- NULL
+  print(paste0("Will train on full dataset which consists of ", ncol(train_eset), " samples and ", ncol(train_features), " features."))
+}
+
+if(train_on_split_or_full_set == "original_split"){
+  # Splitting data in train and test data
+  set.seed(myseed) #set seed for reproducibility
+  temp <- dplyr::sample_n(pData(high_dose_baseline_eset), (nrow(pData(high_dose_baseline_eset))*(2/3)))
+  indices <- which(rownames(pData(high_dose_baseline_eset)) %in% rownames(temp)) #save indices for train set and harmonization downstream
+  #create train and test sets with corresponding outcome factor lists for feature selection and future reference
+  train_eset <- high_dose_baseline_eset[,indices] #train set
+  train_features <- high_dose_features_class[indices,]
+  test_eset <- high_dose_baseline_eset[,-indices] #test set
+  test_features <- high_dose_features_class[-indices,]
+
+  print(paste0("Training set reduced to ", ncol(train_eset), " samples and ", ncol(train_features), " features."))
+  print(paste0("Test set reduced to ", ncol(test_eset), " samples and ", ncol(test_features), " features."))
+}
+```
+
+
+```{r machine learning data setup}
+train_df <- train_features %>%
+  dplyr::select(-class)
+  
+outcome_df <- train_features %>%
+  dplyr::select(class)
+
+outcome <- outcome_df  %>%
+  rownames_to_column(var = "sample_id") %>%
+  deframe() %>%
+  as.factor() #1 = infected, 0 = never_infected
+#convert factor to numeric 
+train_labels <- as.numeric(outcome)-1 #note that 0=infected (not protected) and 1 = protected
+
+#check that outcome and model_df are in the same order
+if(all(names(outcome) == rownames(train_df))){
+  print("good to go!")
+} else {
+    print("please check to see if colnames match.")
+}
+```
+
+## Use xgboost for both feature selection, CV, and training
+
+
+```{r partition training and test}
+if(train_on_split_or_full_set == "split" | train_on_split_or_full_set == "full" | train_on_split_or_full_set == "original_split"){
+  train_dat <- t(train_features) %>%
+    data.frame(check.names = FALSE) %>%
+    t() %>%
+    data.frame(check.names = FALSE) %>%
+    mutate(class = factor(class)) %>%
+    mutate_at(c(4:ncol(.)), as.numeric)
+  #convert data frame to data table and preserve rownames
+  setDT(train_dat, keep.rownames = TRUE) 
+  train_dat_samplenames <- train_dat$rn
+  train_dat <- train_dat[,-1]
+  #sanity check
+  if(all(colnames(train_dat) == colnames(train_features)) &
+     all(train_dat_samplenames == rownames(train_features))){
+    print(paste0("'", train_on_split_or_full_set, "' training set good to go!"))
+    } else {
+      print("please check to see if training samples and features match.")
+      }
+  #check missing values 
+  #table(is.na(train_dat))
+  #sapply(train_dat, function(x) sum(is.na(x))/length(x))*100
+  
+  #assign data and labels using one hot encoding 
+  train_labels <- train_dat$class
+  new_train <- model.matrix(~.+0,data = train_dat[,-c("class"),with=F])
+  colnames(new_train) <- gsub("\\`","",colnames(new_train))
+  #convert factor to numeric 
+  train_labels <- as.numeric(train_labels)-1 #note that 0=infected (not protected) and 1 = protected
+  #prepare matrix
+  dtrain <- xgb.DMatrix(data = new_train, label = train_labels)
+
+  if(train_on_split_or_full_set == "split" | train_on_split_or_full_set == "original_split"){
+    test_dat <- t(test_features) %>%
+    data.frame(check.names = FALSE) %>%
+    t() %>%
+    data.frame(check.names = FALSE) %>%
+    mutate(class = factor(class)) %>%
+    mutate_at(c(4:ncol(.)), as.numeric)
+    
+    setDT(test_dat, keep.rownames = TRUE)
+    test_dat_samplenames <- test_dat$rn
+    test_dat <- test_dat[,-1]
+    
+    if(all(colnames(test_dat) == colnames(test_features)) &
+       all(test_dat_samplenames == rownames(test_features))){
+      print(paste0("'", train_on_split_or_full_set, "' test set good to go!"))
+      } else {
+        print("please check to see if test samples and features match.")
+      }
+    #check missing values
+    #table(is.na(test_dat))
+    #sapply(test_dat, function(x) sum(is.na(x))/length(x))*100
+    #see https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/ for         more data cleaning options
+      #assign data and labels using one hot encoding 
+    test_labels <- test_dat$class #Levels: infected protected --> 1 2
+    new_test <- model.matrix(~.+0, data = test_dat[,-c("class"), with=F])
+    colnames(new_test) <- gsub("\\`","",colnames(new_test))
+    #convert factor to numeric 
+    test_labels <- as.numeric(test_labels)-1 #note that 0=infected (not protected) and 1 = protected using one hot encoding 
+    #prepare matrix
+    dtest <- xgb.DMatrix(data = new_test, label = test_labels)
+  }
+}
+```
+
+### Build initial model
+
+```{r build initial model}
+#default parameters
+params <- list(booster = "gbtree", objective = "binary:logistic", eta=0.3, gamma=0, max_depth=6, min_child_weight=1, subsample=1, colsample_bytree=1)
+
+xgbcv <- xgb.cv( params = params, data = dtrain, nrounds = 500, nfold = 5, showsd = T, stratified = T, print_every_n = 10, early_stopping_rounds = 30, maximize = F)
+min(xgbcv$test.error.mean)
+#best iteration=1
+
+#first default - model training
+if(train_on_split_or_full_set == "split" | train_on_split_or_full_set == "original_slpit"){
+  xgb1 <- xgb.train(params = params, data = dtrain, nrounds = 100, watchlist = list(val=dtest,train=dtrain), print_every_n = 10, early_stopping_rounds = 10, maximize = F
+                    , eval_metric = "error")
+  #model prediction
+  xgbpred <- predict (xgb1,dtest)
+  xgbpred <- ifelse (xgbpred > 0.5,1,0)
+  #confusion matrix
+  library(caret)
+  caret::confusionMatrix(as.factor(xgbpred), as.factor(test_labels), dnn = c("test","train")) #note that 0=infected (not protected) and 1 = protected using one hot encoding
+  }
+if(train_on_split_or_full_set == "full"){
+  xgb1 <- xgb.train(params = params, data = dtrain, nrounds = 100, watchlist = list(train=dtrain), print_every_n = 10, early_stopping_rounds = 10, maximize = F
+                    , eval_metric = "error")
+}
+
+#view variable importance plot
+mat <- xgb.importance(feature_names = xgb1$feature_names,model = xgb1)
+xgb.plot.importance(importance_matrix = mat[1:20]) 
+```
+
+
+
+```{r use mlr3 package}
+library(mlr)
+library(mlr3)
+#https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+
+#convert characters to factors
+fact_col <- colnames(train_dat)[sapply(train_dat,is.character)]
+for(i in fact_col) set(train_dat, j=i, value = factor(train_dat[[i]]))
+if(train_on_split_or_full_set != "full"){
+  for (i in fact_col) set(test_dat, j=i, value = factor(test_dat[[i]]))
+}
+
+#make dataframe to link original colnames to syntactical colnames; allows you to always map back to original names
+colname_key_df <- data.frame(og_colname = colnames(train_dat),
+                             syntactic_colname = make.names(colnames(train_dat), unique = TRUE))
+if(train_on_split_or_full_set != "full"){
+  if(all(colnames(train_dat) == colname_key_df$og_colname) &
+     all(colnames(train_dat) == colnames(test_dat))){
+    colnames(train_dat) <- colname_key_df$syntactic_colname
+    colnames(test_dat) <- colname_key_df$syntactic_colname
+    } else {
+      print("names don't match")
+    }
+}
+if(train_on_split_or_full_set == "full"){
+  if(all(colnames(train_dat) == colname_key_df$og_colname)){
+    colnames(train_dat) <- colname_key_df$syntactic_colname
+    } else {
+      print("names don't match")
+    }
+}
+#create tasks
+traintask <- mlr::makeClassifTask(data = as.data.frame(train_dat), target = "class")
+if(train_on_split_or_full_set != "full"){
+  testtask <- mlr::makeClassifTask(data = as.data.frame(test_dat), target = "class")
+}
+
+#do one hot encoding`<br/> 
+traintask <- createDummyFeatures (obj = traintask) 
+if(train_on_split_or_full_set != "full"){
+  testtask <- createDummyFeatures (obj = testtask)
+}
+
+#create learner
+lrn <- makeLearner("classif.xgboost",
+                   objective="binary:logistic",
+                   nrounds=1000,
+                   early_stopping_rounds = 100,
+                   eval_metric="error",
+                   predict.type = "response")
+
+#set parameter space
+#https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+#https://www.kaggle.com/code/prashant111/a-guide-on-xgboost-hyperparameters-tuning
+params <- makeParamSet(makeDiscreteParam("booster", values = c("gbtree")),
+                       makeIntegerParam("gamma",lower = 0L,upper = 3L),
+                       makeIntegerParam("max_depth",lower = 2L,upper = 5L),
+                       makeNumericParam("eta",lower = 0.01,upper = 0.2),
+                       makeNumericParam("min_child_weight",lower = 0L,upper = 8L),
+                       makeNumericParam("subsample",lower = 0.75,upper = 0.9),
+                       makeNumericParam("lambda",lower = 0, upper = 1),
+                       makeNumericParam("alpha",lower = 0, upper = 1),
+                       makeNumericParam("colsample_bytree",lower = 0.5,upper = 1))
+
+#set resampling strategy
+rdesc <- makeResampleDesc(method = "CV",
+                          predict = "test",
+                          iters = 4,
+                          stratify = T)
+```
+
+```{r hyperparameter tuning to select best features loop}
+#set parallel backend
+library(parallel)
+library(parallelMap)
+library(tictoc)
+parallelStartSocket(cpus = detectCores())
+
+#set options
+maxiterations <- 100 #number of iterations for each run of hyperparameter tuning
+runs <- 500 #number of runs
+
+#search strategy
+ctrl <- makeTuneControlRandom(maxit = maxiterations)
+tune_res_list <- best_hyper_pars_list <- xgb1_res_list <- top_ten_features_list <- c()
+tic(msg = paste0("total for ", runs, " total runs"))
+for(i in 1:runs){
+  run_seed <- sample(1:5000,1)
+  set.seed(run_seed)
+  #parameter tuning
+  print(paste0("Begin run number ", i, " of ", runs, " total runs."))
+  print(paste0("Seed for splitting train and test set was ", myseed, "."))
+  print(paste0("Seed for run is ", run_seed, "."))
+  print(paste0("maxiterations for hyperparameter tuning: ", maxiterations))
+  print(paste0("Running hyperparameter tuning on run number ", i, " of ", runs, " total runs."))
+  tic(msg = paste0("hyperparameter tuning for run ", i))
+  #set parameter space
+  #https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+  #https://www.kaggle.com/code/prashant111/a-guide-on-xgboost-hyperparameters-tuning
+  params <- makeParamSet( makeDiscreteParam("booster", values = c("gbtree")),
+                          makeIntegerParam("gamma",lower = 0L,upper = 3L),
+                          makeIntegerParam("max_depth",lower = 2L,upper = 5L),
+                          makeNumericParam("eta",lower = 0.01,upper = 0.2),
+                          makeNumericParam("min_child_weight",lower = 0L,upper = 4L),
+                          makeNumericParam("subsample",lower = 0.75,upper = 0.9),
+                          makeNumericParam("lambda",lower = 0, upper = 1),
+                          makeNumericParam("alpha",lower = 0, upper = 1),
+                          makeNumericParam("colsample_bytree",lower = 0.5,upper = 1))
+  
+  #set resampling strategy
+  rdesc <- makeResampleDesc(method = "CV",
+                            predict = "test",
+                            iters = 4,
+                            stratify = T)
+  tune_res_list[[i]] <- tuneParams(learner = lrn, task = traintask, resampling = rdesc, measures = acc, par.set = params, control = ctrl, show.info = T)
+  #set hyperparameters
+  lrn_tune <- setHyperPars(lrn, par.vals = tune_res_list[[i]]$x)
+  best_hyper_pars <- data.frame(iterations = maxiterations, lrn_tune$par.vals)
+  best_hyper_pars_list[[i]] <- best_hyper_pars
+  tuned_params <- list(booster = best_hyper_pars$booster,
+                       objective = best_hyper_pars$objective,
+                       eta = best_hyper_pars$eta,
+                       gamma = best_hyper_pars$gamma,
+                       max_depth = best_hyper_pars$max_depth,
+                       min_child_weight = best_hyper_pars$min_child_weight,
+                       subsample = best_hyper_pars$subsample,
+                       colsample_bytree = best_hyper_pars$colsample_bytree)
+  toc()
+  #retrain model on best hyperparameters
+  print(paste0("Training on best hyperparameters on run number ", i, " of ", runs, " total runs."))
+  tic(msg = paste0("training on best hyperparameters for run ", i))
+  xgb1 <- xgb.train(params = tuned_params,
+                    data = dtrain,
+                    nrounds = 100,
+                    watchlist = list(train=dtrain),
+                    print_every_n = 10,
+                    early_stopping_rounds = 20,
+                    maximize = F ,
+                    eval_metric = "error")
+  xgb1_res_list[[i]] <- xgb1
+  #get variable importance
+  mat <- xgb.importance(feature_names = xgb1$feature_names, model = xgb1)
+  print(paste0("Top 3 features of run number ", i, " of ", runs, " total runs are ",
+               mat$Feature[1], ", ",
+               mat$Feature[2], ", ",
+               mat$Feature[3], "."))
+  #xgb.plot.importance (importance_matrix = mat[1:20]) 
+  top_ten_features_list[[i]] <- as.data.frame(mat[1:10]) %>%
+    rownames_to_column(var = "rank") %>%
+    drop_na()
+  toc()
+  names(tune_res_list) <- paste0("run ", 1:i)
+  names(xgb1_res_list) <- paste0("run ", 1:i)
+  top_ten_features_df <- bind_rows(top_ten_features_list, .id = "run")
+  saveRDS(tune_res_list, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                       "tune_res_list_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                       gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+  saveRDS(xgb1_res_list, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                       "xgb1_res_list_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                       gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+  saveRDS(top_ten_features_df, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                             "top_ten_features_df_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                             gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+}
+toc()
+```
+
+### Evaluate most frequently appearing modules
+
+```{r frequent mods}
+total_runs <- max(as.integer(top_ten_features_df$run))
+summary_top_ten <- top_ten_features_df %>%
+  group_by(Feature) %>%
+  summarise(appearances = n(), sum_gain = sum(Gain),total_runs = total_runs) %>%
+  ungroup() %>%
+  mutate(avg_gain = sum_gain/total_runs, pct_appear = appearances/total_runs) %>%
+  arrange(desc(appearances), desc(avg_gain))
+writexl::write_xlsx(summary_top_ten, paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                "summary_top_ten_", "seed_", myseed, "_", runs, "_htune_iters_", maxiterations, "_",
+                                gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".xlsx"))
+```
+
+### Based on initial training, select features appearing within top 10 of at least 10% of runs and train again on these downselected features to optimize model
+
+First experiment using seed 2441 and 500 runs yielded 167 features appearing within the top 10 at least once, with 21 of these appearing in at least 50 of 500 runs.
+
+#### Read in feature list
+
+```{r read in feature list}
+resdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/"
+feature_freq <- readxl::read_xlsx(paste0(resdir, "split_seed_4524_500_runs/summary_top_ten_seed_4524_500_htune_iters_100_Sat-Aug-05-00-50-53-2023.xlsx"))
+feature_freq_10pct <- feature_freq %>%
+  filter(pct_appear >= 0.10)
+```
+
+```{r learner parameter space resampling}
+#create learner
+lrn <- makeLearner("classif.xgboost",
+                   objective="binary:logistic",
+                   nrounds=1000,
+                   early_stopping_rounds = 100,
+                   eval_metric="error",
+                   predict.type = "response")
+
+#set parameter space
+#https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+#https://www.kaggle.com/code/prashant111/a-guide-on-xgboost-hyperparameters-tuning
+params <- makeParamSet( makeDiscreteParam("booster", values = c("gbtree")),
+                        makeIntegerParam("gamma",lower = 0L,upper = 3L),
+                        makeIntegerParam("max_depth",lower = 2L,upper = 5L),
+                        makeNumericParam("eta",lower = 0.01,upper = 0.2),
+                        makeNumericParam("min_child_weight",lower = 0L,upper = 4L),
+                        makeNumericParam("subsample",lower = 0.75,upper = 0.9),
+                        makeNumericParam("lambda",lower = 0, upper = 1),
+                        makeNumericParam("alpha",lower = 0, upper = 1),
+                        makeNumericParam("colsample_bytree",lower = 0.5,upper = 1))
+#set resampling strategy
+rdesc <- makeResampleDesc(method = "CV",
+                          predict = "test",
+                          iters = 4,
+                          stratify = T)
+```
+
+#### Create downselected feature set
+
+```{r downselected training set data setup}
+library(mlr)
+library(mlr3)
+#https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+
+train_df <- train_features %>%
+  dplyr::select(-class) %>%
+  dplyr::select(feature_freq_10pct$Feature)
+  
+outcome_df <- train_features %>%
+  dplyr::select(class)
+
+outcome <- outcome_df  %>%
+  rownames_to_column(var = "sample_id") %>%
+  deframe() %>%
+  as.factor() #1 = infected, 0 = never_infected
+#convert factor to numeric 
+train_labels <- as.numeric(outcome)-1 #note that 0=infected (not protected) and 1 = protected
+
+#check that outcome and model_df are in the same order
+if(all(names(outcome) == rownames(train_df))){
+  print("good to go!")
+} else {
+    print("please check to see if colnames match.")
+}
+```
+
+## Cross-validate on n sampled downselected features
+
+```{r cv on n sampled features}
+#set parallel backend
+library(parallel)
+library(parallelMap)
+library(tictoc)
+parallelStartSocket(cpus = detectCores())
+
+#set options
+n_runs <- 500 #number of runs
+n_feat_sampled <- 3:7 #range for number of features sampled
+maxiterations <- 200 #number of iterations for each run of hyperparameter tuning
+tune_res_list <- best_hyper_pars_list <- xgb1 <- xgb1_best_scores <- xgb1_res_list <- features_list <- c()
+for(i in 1:n_runs){
+  tic(msg = paste0("total for ", n_runs, " total runs"))
+  #parameter tuning
+  print(paste0("Begin run number ", i, " of ", n_runs, " total runs."))
+  new_train_feat <- c("class", sample(feature_freq_10pct$Feature, sample(n_feat_sampled, 1), replace=FALSE))
+  train_dat_temp <- t(train_features[,new_train_feat]) %>%
+    data.frame(check.names = FALSE) %>%
+    t() %>%
+    data.frame(check.names = FALSE) %>%
+    mutate(class = factor(class)) %>%
+    mutate_at(c(2:ncol(.)), as.numeric)
+  #convert data frame to data table and preserve rownames
+  setDT(train_dat_temp, keep.rownames = TRUE, check.names=FALSE) 
+  train_dat_temp_samplenames <- train_dat_temp$rn
+  train_dat_temp <- train_dat_temp[,-1]
+  #sanity check
+  if(all(colnames(train_dat_temp) == new_train_feat) &
+     all(train_dat_temp_samplenames == rownames(train_features))){
+    print(paste0("'", train_on_split_or_full_set, "' training set good to go!"))
+    } else {
+      print("please check to see if training samples and features match.")
+      }
+  #check missing values 
+  #table(is.na(train_dat_temp))
+  #sapply(train_dat_temp, function(x) sum(is.na(x))/length(x))*100
+  
+  #assign data and labels using one hot encoding 
+  train_labels <- train_dat_temp$class
+  new_train <- model.matrix(~.+0, data = train_dat_temp[,-c("class"),with=F])
+  colnames(new_train) <- gsub("\\`","",colnames(new_train))
+  #convert factor to numeric 
+  train_labels <- as.numeric(train_labels)-1 #note that 0=infected (not protected) and 1 = protected
+  #prepare matrix
+  dtrain <- xgb.DMatrix(data = new_train, label = train_labels)
+  #convert characters to factors
+  fact_col <- colnames(train_dat_temp)[sapply(train_dat_temp,is.character)]
+  for(k in fact_col) set(train_dat_temp, j=k, value = factor(train_dat_temp[[k]]))
+  #make dataframe to link original colnames to syntactical colnames; allows you to always map back to original names
+  colname_key_df <- data.frame(og_colname = colnames(train_dat_temp),
+                               syntactic_colname = make.names(colnames(train_dat_temp), unique = TRUE))
+  if(all(colnames(train_dat_temp) == colname_key_df$og_colname)){
+    colnames(train_dat_temp) <- colname_key_df$syntactic_colname
+    } else {
+      print("names don't match")
+      }
+#create tasks
+traintask <- mlr::makeClassifTask(data = as.data.frame(train_dat_temp), target = "class")
+
+#do one hot encoding`<br/> 
+traintask <- createDummyFeatures (obj = traintask)
+
+#search strategy
+ctrl <- makeTuneControlRandom(maxit = maxiterations)
+print(paste0("Running hyperparameter tuning on run number ", i, " of ", n_runs, " total runs."))
+print(paste0("maxiterations for hyperparameter tuning: ", maxiterations))
+tic(msg = paste0("hyperparameter tuning for run ", i))
+tune_res_list[[i]] <- tuneParams(learner = lrn, task = traintask, resampling = rdesc, measures = acc, par.set = params, control = ctrl, show.info = T)
+#set hyperparameters
+lrn_tune <- setHyperPars(lrn, par.vals = tune_res_list[[i]]$x)
+best_hyper_pars <- data.frame(iterations = maxiterations, lrn_tune$par.vals)
+best_hyper_pars_list[[i]] <- best_hyper_pars
+tuned_params <- list(booster = best_hyper_pars$booster,
+                     objective = best_hyper_pars$objective,
+                     eta = best_hyper_pars$eta,
+                     gamma = best_hyper_pars$gamma,
+                     max_depth = best_hyper_pars$max_depth,
+                     min_child_weight = best_hyper_pars$min_child_weight,
+                     subsample = best_hyper_pars$subsample,
+                     colsample_bytree = best_hyper_pars$colsample_bytree)
+toc()
+  #retrain model on best hyperparameters
+  print(paste0("Training on best hyperparameters on run number ", i, " of ", n_runs, " total runs."))
+  tic(msg = paste0("training on best hyperparameters for run ", i))
+  xgb1[[i]] <- xgb.train(params = tuned_params,
+                    data = dtrain,
+                    nrounds = 100,
+                    watchlist = list(train=dtrain),
+                    print_every_n = 10,
+                    early_stopping_rounds = 20,
+                    maximize = F ,
+                    eval_metric = "auc")
+  xgb1_res_list[[i]] <- xgb1[[i]]
+  #get variable importance
+  mat <- xgb.importance(feature_names = xgb1[[i]]$feature_names, model = xgb1[[i]])
+  print(paste0("Top features of run number ", i, " of ", n_runs, " total runs are ",
+               mat$Feature[1], ", ",
+               mat$Feature[2], ", ",
+               mat$Feature[3], "."))
+  #xgb.plot.importance (importance_matrix = mat[1:20]) 
+  features_list[[i]] <- as.data.frame(mat) %>%
+    rownames_to_column(var = "rank") %>%
+    drop_na()
+  xgb1_best_scores[[i]] <- data.frame("features" = paste(features_list[[i]]$Feature, collapse = '; '),
+                                      "auc" = xgb1_res_list[[i]]$best_score) 
+  toc()
+  names(tune_res_list) <- paste0("run ", 1:i)
+  names(xgb1) <- paste0("run ", 1:i)
+  names(xgb1_res_list) <- paste0("run ", 1:i)
+  features_list_df <- bind_rows(features_list, .id = "run")
+  xgb1_best_scores_df <- bind_rows(xgb1_best_scores, .id = "run") %>%
+    arrange(desc(auc))
+}
+```
+
+```{r save hyperparameter tuning to select best features loop downselected}
+saveRDS(train_features, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                     "train_features_seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                     gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+writexl::write_xlsx(xgb1_best_scores_df, paste0(resdir, "xgb1_best_scores_downselected_df_seed_", myseed, "_runs_", i, ".xlsx"))
+saveRDS(tune_res_list, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                     "tune_res_list_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                     gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+saveRDS(xgb1_res_list, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                     "xgb1_res_list_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                     gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+saveRDS(top_ten_features_df, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                           "top_ten_features_df_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                           gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+```
+
+### Evaluate most frequently appearing modules using downselected features
+
+```{r see top models}
+xgb1_best_scores_df[1:2,2:3] %>%
+  kableExtra::kbl()
+```
+
+## Plot accuracy as confusion matrix
+
+```{r confusion matrix and importance}
+xgb1_best_scores_df <- xgb1_best_scores_df %>%
+  arrange(desc(auc))
+
+n_test_runs <- nrow(xgb1_best_scores_df)
+confusion_mat <- features <- features_concatenated <- c()
+confusion_mat_df <- data.frame(matrix(NA, nrow = n_test_runs, ncol = 19))
+if(train_on_split_or_full_set == "split"){
+  #check labels and class
+  set.seed(myseed)
+  temp_df <- data.frame("class" = test_dat$class, "labels" = test_labels)
+  table(temp_df$class, temp_df$label)
+  #confirmed that infected = 0, and protected = 1
+  rm("temp_df")
+  #model prediction
+  for(i in 1:n_test_runs){
+    print(paste0("running ", i , " of ", n_test_runs, " total runs."))
+    reduced_xgb1 <- xgb1[[as.integer(xgb1_best_scores_df[i,]$run)]] #reduce 
+    features[[i]] <- reduced_xgb1$feature_names #as vector
+    features_concatenated[[i]] <- data.frame("run" = as.integer(xgb1_best_scores_df[i,]$run),
+                                             "features" = paste0(reduced_xgb1$feature_names, collapse = "; ")) #as concatenated string
+    xgbDMat_test_dat <- xgb.DMatrix(data = new_test[,reduced_xgb1$feature_names], label = test_labels, nthread = 8)
+    xgbpred <- predict(reduced_xgb1, xgbDMat_test_dat)
+    xgbpred <- ifelse(xgbpred > 0.5,1,0)
+    xgbpred <- factor(ifelse(xgbpred==1, "protected", "not protected"))
+    test_labels_for_confusion_matrix <- factor(ifelse(test_labels==1, "protected", "not protected"))
+    confusion_mat[[i]] <- caret::confusionMatrix(xgbpred, test_labels_for_confusion_matrix)
+    confusion_mat_df[i,] <- c("run" = as.integer(xgb1_best_scores_df[i,]$run),
+                                          confusion_mat[[i]]$overall,
+                                          confusion_mat[[i]]$byClass)
+    colnames(confusion_mat_df) <- names(c("run" = as.integer(xgb1_best_scores_df[i,]$run),
+                                          confusion_mat[[i]]$overall,
+                                          confusion_mat[[i]]$byClass))
+    names(features)[i] <- paste0("run ", xgb1_best_scores_df[i,]$run)
+    names(features_concatenated)[i] <- xgb1_best_scores_df[i,]$run
+    names(confusion_mat)[i] <- paste0("run ", xgb1_best_scores_df[i,]$run)
+  }
+}
+confusion_mat_df <- confusion_mat_df %>%
+  arrange(desc(Accuracy))
+features_concatenated_bound <- bind_rows(features_concatenated, .id = "run") %>%
+  mutate(run = as.integer(run)) %>%
+  left_join(., confusion_mat_df, by = "run") %>%
+  arrange(desc(Accuracy))
+```
+
+```{r save test features and results on downselected}
+saveRDS(test_features, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                     "test_features_seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                     gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+saveRDS(confusion_mat, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                     "test_confuse_mat_seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                     gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+writexl::write_xlsx(features_concatenated_bound, paste0(resdir, "downselected_test_confusion_mat_res_df_seed_", myseed, "_runs_", i,".xlsx"))
+```
+
+## Re-analyze but using a different 2/3 as training that includes the original 1/3 test
+
+```{r remake new training and test sets}
+train_samples_seed_4524 <- readRDS("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/split_seed_4524_500_runs/train_features_seed_4524_runs_500_htune_iters_200_Wed-Aug-09-00-26-55-2023.rds") %>%
+  rownames()
+
+test_samples_seed_4524 <- readRDS("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/split_seed_4524_500_runs/test_features_seed_4524_runs_500_htune_iters_200_Wed-Aug-09-00-42-48-2023.rds") %>%
+  rownames()
+
+#create first new training set that includes test set
+set.seed(1973) #set seed as 1973 for reproducibility 
+new_train_sub1 <- sample(train_samples_seed_4524, size = 0.5*length(train_samples_seed_4524))
+new_train_sub2 <- setdiff(train_samples_seed_4524, new_train_sub1) #use setdiff to get samples from half that was not selected
+new_train_1 <- c(new_train_sub1, test_samples_seed_4524) #combine 50% original training set with original test set
+new_test_1 <- new_train_sub2 #define remaining 50% original training set as new test set #1
+#create second new training set that includes test set
+new_train_2 <- c(new_train_sub2, test_samples_seed_4524) #combine other 50% of original training set with original test set
+new_test_2 <- new_train_sub1 #define other 50% original training set as new test set #2
+```
+
+```{r make new test and new test data}
+all_features <- rbind(train_features, test_features)
+new_train_features_1 <- all_features[new_train_1,]
+new_test_features_1 <- all_features[new_test_1,]
+new_train_features_2 <- all_features[new_train_2,]
+new_test_features_2 <- all_features[new_test_2,]
+```
+
+## Start for new training set 1
+
+```{r machine learning data setup new train 1}
+new_train_1_df <- new_train_features_1 %>%
+  dplyr::select(-class)
+  
+outcome_df <- new_train_features_1 %>%
+  dplyr::select(class)
+
+outcome <- outcome_df  %>%
+  rownames_to_column(var = "sample_id") %>%
+  deframe() %>%
+  as.factor() #1 = infected, 0 = never_infected
+#convert factor to numeric 
+new_train_1_labels <- as.numeric(outcome)-1 #note that 0=infected (not protected) and 1 = protected
+
+#check that outcome and model_df are in the same order
+if(all(names(outcome) == rownames(new_train_1_df))){
+  print("good to go!")
+} else {
+    print("please check to see if colnames match.")
+}
+```
+
+## Use xgboost for both feature selection, CV, and training on new training set 1
+
+
+```{r partition training and test new train 1}
+if(train_on_split_or_full_set == "split" | train_on_split_or_full_set == "original_split"){
+  new_train_dat_1 <- t(new_train_features_1) %>%
+    data.frame(check.names = FALSE) %>%
+    t() %>%
+    data.frame(check.names = FALSE) %>%
+    mutate(class = factor(class)) %>%
+    mutate_at(c(4:ncol(.)), as.numeric)
+  #convert data frame to data table and preserve rownames
+  setDT(new_train_dat_1, keep.rownames = TRUE) 
+  train_dat_samplenames <- new_train_dat_1$rn
+  new_train_dat_1 <- new_train_dat_1[,-1]
+  #sanity check
+  if(all(colnames(new_train_dat_1) == colnames(new_train_features_1)) &
+     all(train_dat_samplenames == rownames(new_train_features_1))){
+    print(paste0("'", train_on_split_or_full_set, "' training set good to go!"))
+    } else {
+      print("please check to see if training samples and features match.")
+      }
+
+  
+  
+  #assign data and labels using one hot encoding 
+  new_train_1_labels <- new_train_dat_1$class
+  new_train_1 <- model.matrix(~.+0,data = new_train_dat_1[,-c("class"),with=F])
+  colnames(new_train_1) <- gsub("\\`","",colnames(new_train_1))
+  #convert factor to numeric 
+  new_train_1_labels <- as.numeric(new_train_1_labels)-1 #note that 0=infected (not protected) and 1 = protected
+  #prepare matrix
+  new_dtrain_1 <- xgb.DMatrix(data = new_train_1, label = new_train_1_labels)
+
+  if(train_on_split_or_full_set == "split" | train_on_split_or_full_set == "original_split"){
+    new_test_dat_1 <- t(new_test_features_1) %>%
+    data.frame(check.names = FALSE) %>%
+    t() %>%
+    data.frame(check.names = FALSE) %>%
+    mutate(class = factor(class)) %>%
+    mutate_at(c(4:ncol(.)), as.numeric)
+    
+    setDT(new_test_dat_1, keep.rownames = TRUE)
+    new_test_dat_1_samplenames <- new_test_dat_1$rn
+    new_test_dat_1 <- new_test_dat_1[,-1]
+    
+    if(all(colnames(new_test_dat_1) == colnames(new_test_features_1)) &
+       all(new_test_dat_1_samplenames == rownames(new_test_features_1))){
+      print(paste0("'", train_on_split_or_full_set, "' test set good to go!"))
+      } else {
+        print("please check to see if test samples and features match.")
+      }
+    #check missing values
+    #table(is.na(new_test_dat_1))
+    #sapply(new_test_dat_1, function(x) sum(is.na(x))/length(x))*100
+    #see https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/ for         more data cleaning options
+      #assign data and labels using one hot encoding 
+    new_test_dat_1_labels <- new_test_dat_1$class #Levels: infected protected --> 1 2
+    new_test_1 <- model.matrix(~.+0, data = new_test_dat_1[,-c("class"), with=F])
+    colnames(new_test_1) <- gsub("\\`","",colnames(new_test_1))
+    #convert factor to numeric 
+    new_test_dat_1_labels <- as.numeric(new_test_dat_1_labels)-1 #note that 0=infected (not protected) and 1 = protected using one hot encoding 
+    #prepare matrix
+    new_dtest_1 <- xgb.DMatrix(data = new_test_1, label = new_test_dat_1_labels)
+  }
+}
+```
+
+### Build initial model for new training set 1
+
+```{r build initial model new train 1}
+#default parameters
+params <- list(booster = "gbtree", objective = "binary:logistic", eta=0.3, gamma=0, max_depth=6, min_child_weight=1, subsample=1, colsample_bytree=1)
+
+xgbcv_1 <- xgb.cv( params = params, data = new_dtrain_1, nrounds = 500, nfold = 5, showsd = T, stratified = T, print_every_n = 10, early_stopping_rounds = 30, maximize = F)
+min(xgbcv_1$test.error.mean)
+#best iteration=1
+
+#first default - model training
+if(train_on_split_or_full_set == "split" | train_on_split_or_full_set == "original_slpit"){
+  xgb1_1 <- xgb.train(params = params, data = new_dtrain_1, nrounds = 100, watchlist = list(val=new_dtest_1, train=new_dtrain_1), print_every_n = 10, early_stopping_rounds = 10, maximize = F
+                    , eval_metric = "error")
+  #model prediction
+  xgbpred_1 <- predict (xgb1_1,dtest)
+  xgbpred_1 <- ifelse (xgbpred_1 > 0.5,1,0)
+  #confusion matrix
+  library(caret)
+  caret::confusionMatrix(as.factor(xgbpred_1), as.factor(new_test_dat_1_labels), dnn = c("test","train")) #note that 0=infected (not protected) and 1 = protected using one hot encoding
+  }
+if(train_on_split_or_full_set == "full"){
+  xgb1_1 <- xgb.train(params = params, data = new_dtrain_1, nrounds = 100, watchlist = list(train=new_dtrain_1), print_every_n = 10, early_stopping_rounds = 10,
+                    maximize = F, eval_metric = "error")
+}
+
+#view variable importance plot
+mat_1 <- xgb.importance(feature_names = xgb1_1$feature_names, model = xgb1_1)
+xgb.plot.importance(importance_matrix = mat_1[1:20]) 
+```
+
+```{r use mlr3 package new train 1}
+library(mlr)
+library(mlr3)
+#https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+
+#convert characters to factors
+fact_col <- colnames(new_train_dat_1)[sapply(new_train_dat_1,is.character)]
+for(i in fact_col) set(new_train_dat_1, j=i, value = factor(new_train_dat_1[[i]]))
+if(train_on_split_or_full_set != "full"){
+  for (i in fact_col) set(new_test_dat_1, j=i, value = factor(new_test_dat_1[[i]]))
+}
+
+#make dataframe to link original colnames to syntactical colnames; allows you to always map back to original names
+colname_key_df <- data.frame(og_colname = colnames(new_train_dat_1),
+                             syntactic_colname = make.names(colnames(new_train_dat_1), unique = TRUE))
+if(train_on_split_or_full_set != "full"){
+  if(all(colnames(new_train_dat_1) == colname_key_df$og_colname) &
+     all(colnames(new_train_dat_1) == colnames(new_test_dat_1))){
+    colnames(new_train_dat_1) <- colname_key_df$syntactic_colname
+    colnames(new_test_dat_1) <- colname_key_df$syntactic_colname
+    } else {
+      print("names don't match")
+    }
+}
+if(train_on_split_or_full_set == "full"){
+  if(all(colnames(new_train_dat_1) == colname_key_df$og_colname)){
+    colnames(new_train_dat_1) <- colname_key_df$syntactic_colname
+    } else {
+      print("names don't match")
+    }
+}
+#create tasks
+traintask_1 <- mlr::makeClassifTask(data = as.data.frame(new_train_dat_1), target = "class")
+if(train_on_split_or_full_set != "full"){
+  testtask_1 <- mlr::makeClassifTask(data = as.data.frame(new_test_dat_1), target = "class")
+}
+
+#do one hot encoding`<br/> 
+traintask_1 <- createDummyFeatures (obj = traintask_1) 
+if(train_on_split_or_full_set != "full"){
+  testtask_1 <- createDummyFeatures (obj = testtask_1)
+}
+
+#create learner
+lrn <- makeLearner("classif.xgboost",
+                   objective="binary:logistic",
+                   nrounds=1000,
+                   early_stopping_rounds = 100,
+                   eval_metric="error",
+                   predict.type = "response")
+
+#set parameter space
+#https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+#https://www.kaggle.com/code/prashant111/a-guide-on-xgboost-hyperparameters-tuning
+params <- makeParamSet(makeDiscreteParam("booster", values = c("gbtree")),
+                       makeIntegerParam("gamma",lower = 0L,upper = 3L),
+                       makeIntegerParam("max_depth",lower = 2L,upper = 5L),
+                       makeNumericParam("eta",lower = 0.01,upper = 0.2),
+                       makeNumericParam("min_child_weight",lower = 0L,upper = 8L),
+                       makeNumericParam("subsample",lower = 0.75,upper = 0.9),
+                       makeNumericParam("lambda",lower = 0, upper = 1),
+                       makeNumericParam("alpha",lower = 0, upper = 1),
+                       makeNumericParam("colsample_bytree",lower = 0.5,upper = 1))
+
+#set resampling strategy
+rdesc <- makeResampleDesc(method = "CV",
+                          predict = "test",
+                          iters = 4,
+                          stratify = T)
+```
+
+```{r hyperparameter tuning to select best features loop}
+#set parallel backend
+library(parallel)
+library(parallelMap)
+library(tictoc)
+parallelStartSocket(cpus = detectCores())
+
+#set options
+maxiterations <- 100 #number of iterations for each run of hyperparameter tuning
+runs <- 500 #number of runs
+
+#search strategy
+ctrl <- makeTuneControlRandom(maxit = maxiterations)
+tune_res_list <- best_hyper_pars_list <- xgb1_res_list <- top_ten_features_list <- c()
+tic(msg = paste0("total for ", runs, " total runs"))
+for(i in 1:runs){
+  run_seed <- sample(1:5000,1)
+  set.seed(run_seed)
+  #parameter tuning
+  print(paste0("Begin run number ", i, " of ", runs, " total runs for traintask_1."))
+  print(paste0("Seed for splitting train and test set was ", myseed, "."))
+  print(paste0("Seed for run is ", run_seed, "."))
+  print(paste0("maxiterations for hyperparameter tuning: ", maxiterations))
+  print(paste0("Running hyperparameter tuning on run number ", i, " of ", runs, " total runs."))
+  tic(msg = paste0("hyperparameter tuning for run ", i))
+  #set parameter space
+  #https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+  #https://www.kaggle.com/code/prashant111/a-guide-on-xgboost-hyperparameters-tuning
+  params <- makeParamSet( makeDiscreteParam("booster", values = c("gbtree")),
+                          makeIntegerParam("gamma",lower = 0L,upper = 3L),
+                          makeIntegerParam("max_depth",lower = 2L,upper = 5L),
+                          makeNumericParam("eta",lower = 0.01,upper = 0.2),
+                          makeNumericParam("min_child_weight",lower = 0L,upper = 4L),
+                          makeNumericParam("subsample",lower = 0.75,upper = 0.9),
+                          makeNumericParam("lambda",lower = 0, upper = 1),
+                          makeNumericParam("alpha",lower = 0, upper = 1),
+                          makeNumericParam("colsample_bytree",lower = 0.5,upper = 1))
+  
+  #set resampling strategy
+  rdesc <- makeResampleDesc(method = "CV",
+                            predict = "test",
+                            iters = 4,
+                            stratify = T)
+  tune_res_list[[i]] <- tuneParams(learner = lrn, task = traintask_1, resampling = rdesc, measures = acc, par.set = params, control = ctrl, show.info = T)
+  #set hyperparameters
+  lrn_tune <- setHyperPars(lrn, par.vals = tune_res_list[[i]]$x)
+  best_hyper_pars <- data.frame(iterations = maxiterations, lrn_tune$par.vals)
+  best_hyper_pars_list[[i]] <- best_hyper_pars
+  tuned_params <- list(booster = best_hyper_pars$booster,
+                       objective = best_hyper_pars$objective,
+                       eta = best_hyper_pars$eta,
+                       gamma = best_hyper_pars$gamma,
+                       max_depth = best_hyper_pars$max_depth,
+                       min_child_weight = best_hyper_pars$min_child_weight,
+                       subsample = best_hyper_pars$subsample,
+                       colsample_bytree = best_hyper_pars$colsample_bytree)
+  toc()
+  #retrain model on best hyperparameters
+  print(paste0("Training on best hyperparameters on run number ", i, " of ", runs, " total runs."))
+  tic(msg = paste0("training on best hyperparameters for run ", i))
+  xgb1 <- xgb.train(params = tuned_params,
+                    data = new_dtrain_1,
+                    nrounds = 100,
+                    watchlist = list(train=new_dtrain_1),
+                    print_every_n = 10,
+                    early_stopping_rounds = 20,
+                    maximize = F ,
+                    eval_metric = "error")
+  xgb1_res_list[[i]] <- xgb1
+  #get variable importance
+  mat <- xgb.importance(feature_names = xgb1$feature_names, model = xgb1)
+  print(paste0("Top 3 features of run number ", i, " of ", runs, " total runs are ",
+               mat$Feature[1], ", ",
+               mat$Feature[2], ", ",
+               mat$Feature[3], "."))
+  #xgb.plot.importance (importance_matrix = mat[1:20]) 
+  top_ten_features_list[[i]] <- as.data.frame(mat[1:10]) %>%
+    rownames_to_column(var = "rank") %>%
+    drop_na()
+  toc()
+  names(tune_res_list) <- paste0("run ", 1:i)
+  names(xgb1_res_list) <- paste0("run ", 1:i)
+  top_ten_features_df <- bind_rows(top_ten_features_list, .id = "run")
+  saveRDS(tune_res_list, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                       "new_train_1_",
+                                       "tune_res_list_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                       gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")), ".rds"))
+  saveRDS(xgb1_res_list, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                       "new_train_1_",
+                                       "xgb1_res_list_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                       gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+  saveRDS(top_ten_features_df, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                             "new_train_1_",
+                                             "top_ten_features_df_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                             gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+}
+toc()
+```
+
+### Evaluate most frequently appearing modules on new training set 1
+
+```{r frequent mods new train 1}
+total_runs <- max(as.integer(top_ten_features_df$run))
+summary_top_ten <- top_ten_features_df %>%
+  group_by(Feature) %>%
+  summarise(appearances = n(), sum_gain = sum(Gain),total_runs = total_runs) %>%
+  ungroup() %>%
+  mutate(avg_gain = sum_gain/total_runs, pct_appear = appearances/total_runs) %>%
+  arrange(desc(appearances), desc(avg_gain))
+writexl::write_xlsx(summary_top_ten, paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                            "new_train_1_",
+                                            "summary_top_ten_", "seed_", myseed, "_", runs, "_htune_iters_", maxiterations, "_",
+                                            gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".xlsx"))
+```
+
+### Based on initial training, select features appearing within top 10 of at least 10% of runs and train again on these downselected features to optimize model for new training set 1
+
+Experiment for new training set 1 using seed 2441 and 500 runs yielded 184 features appearing within the top 10 at least once, with 23 of these appearing in at least 50 of 500 runs.
+
+#### Read in feature list on new training set 1
+
+```{r read in feature list new train 1}
+resdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/"
+feature_freq <- readxl::read_xlsx(paste0(resdir,
+                                         "split_seed_4524_500_runs/new_train_1/",
+                                         "new_train_1_",
+                                         "summary_top_ten_seed_4524_500_htune_iters_100_", "Thu-Aug-10-00-20-16-2023", ".xlsx"))
+feature_freq_10pct <- feature_freq %>%
+  filter(pct_appear >= 0.10)
+```
+
+```{r learner parameter space resampling new train 1}
+#create learner
+lrn <- makeLearner("classif.xgboost",
+                   objective="binary:logistic",
+                   nrounds=1000,
+                   early_stopping_rounds = 100,
+                   eval_metric="error",
+                   predict.type = "response")
+
+#set parameter space
+#https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+#https://www.kaggle.com/code/prashant111/a-guide-on-xgboost-hyperparameters-tuning
+params <- makeParamSet( makeDiscreteParam("booster", values = c("gbtree")),
+                        makeIntegerParam("gamma",lower = 0L,upper = 3L),
+                        makeIntegerParam("max_depth",lower = 2L,upper = 5L),
+                        makeNumericParam("eta",lower = 0.01,upper = 0.2),
+                        makeNumericParam("min_child_weight",lower = 0L,upper = 4L),
+                        makeNumericParam("subsample",lower = 0.75,upper = 0.9),
+                        makeNumericParam("lambda",lower = 0, upper = 1),
+                        makeNumericParam("alpha",lower = 0, upper = 1),
+                        makeNumericParam("colsample_bytree",lower = 0.5,upper = 1))
+#set resampling strategy
+rdesc <- makeResampleDesc(method = "CV",
+                          predict = "test",
+                          iters = 4,
+                          stratify = T)
+```
+
+## Cross-validate on n sampled downselected features for new training set 1
+
+```{r cv on n sampled features new train 1}
+#set parallel backend
+library(parallel)
+library(parallelMap)
+library(tictoc)
+parallelStartSocket(cpus = detectCores())
+
+#set options
+n_runs <- 500 #number of runs
+n_feat_sampled <- 3:7 #range for number of features sampled
+maxiterations <- 200 #number of iterations for each run of hyperparameter tuning
+tune_res_list <- best_hyper_pars_list <- xgb1 <- xgb1_best_scores <- xgb1_res_list <- features_list <- c()
+for(i in 1:n_runs){
+  tic(msg = paste0("total for ", n_runs, " total runs"))
+  #parameter tuning
+  print(paste0("Begin run number ", i, " of ", n_runs, " total runs."))
+  new_train_feat <- c("class", sample(feature_freq_10pct$Feature, sample(n_feat_sampled, 1), replace=FALSE))
+  train_dat_temp <- t(new_train_features_1[,new_train_feat]) %>%
+    data.frame(check.names = FALSE) %>%
+    t() %>%
+    data.frame(check.names = FALSE) %>%
+    mutate(class = factor(class)) %>%
+    mutate_at(c(2:ncol(.)), as.numeric)
+  #convert data frame to data table and preserve rownames
+  setDT(train_dat_temp, keep.rownames = TRUE, check.names=FALSE) 
+  train_dat_temp_samplenames <- train_dat_temp$rn
+  train_dat_temp <- train_dat_temp[,-1]
+  #sanity check
+  if(all(colnames(train_dat_temp) == new_train_feat) &
+     all(train_dat_temp_samplenames == rownames(new_train_features_1))){
+    print(paste0("'", train_on_split_or_full_set, "' training set good to go!"))
+    } else {
+      print("please check to see if training samples and features match.")
+      }
+  #check missing values 
+  #table(is.na(train_dat_temp))
+  #sapply(train_dat_temp, function(x) sum(is.na(x))/length(x))*100
+  
+  #assign data and labels using one hot encoding 
+  train_labels <- train_dat_temp$class
+  new_train <- model.matrix(~.+0, data = train_dat_temp[,-c("class"),with=F])
+  colnames(new_train) <- gsub("\\`","",colnames(new_train))
+  #convert factor to numeric 
+  train_labels <- as.numeric(train_labels)-1 #note that 0=infected (not protected) and 1 = protected
+  #prepare matrix
+  dtrain <- xgb.DMatrix(data = new_train, label = train_labels)
+  #convert characters to factors
+  fact_col <- colnames(train_dat_temp)[sapply(train_dat_temp,is.character)]
+  for(k in fact_col) set(train_dat_temp, j=k, value = factor(train_dat_temp[[k]]))
+  #make dataframe to link original colnames to syntactical colnames; allows you to always map back to original names
+  colname_key_df <- data.frame(og_colname = colnames(train_dat_temp),
+                               syntactic_colname = make.names(colnames(train_dat_temp), unique = TRUE))
+  if(all(colnames(train_dat_temp) == colname_key_df$og_colname)){
+    colnames(train_dat_temp) <- colname_key_df$syntactic_colname
+    } else {
+      print("names don't match")
+      }
+#create tasks
+traintask <- mlr::makeClassifTask(data = as.data.frame(train_dat_temp), target = "class")
+
+#do one hot encoding`<br/> 
+traintask <- createDummyFeatures (obj = traintask)
+
+#search strategy
+ctrl <- makeTuneControlRandom(maxit = maxiterations)
+print(paste0("Running hyperparameter tuning on run number ", i, " of ", n_runs, " total runs for new training 1."))
+print(paste0("maxiterations for hyperparameter tuning: ", maxiterations))
+tic(msg = paste0("hyperparameter tuning for run ", i))
+tune_res_list[[i]] <- tuneParams(learner = lrn, task = traintask, resampling = rdesc, measures = acc, par.set = params, control = ctrl, show.info = T)
+#set hyperparameters
+lrn_tune <- setHyperPars(lrn, par.vals = tune_res_list[[i]]$x)
+best_hyper_pars <- data.frame(iterations = maxiterations, lrn_tune$par.vals)
+best_hyper_pars_list[[i]] <- best_hyper_pars
+tuned_params <- list(booster = best_hyper_pars$booster,
+                     objective = best_hyper_pars$objective,
+                     eta = best_hyper_pars$eta,
+                     gamma = best_hyper_pars$gamma,
+                     max_depth = best_hyper_pars$max_depth,
+                     min_child_weight = best_hyper_pars$min_child_weight,
+                     subsample = best_hyper_pars$subsample,
+                     colsample_bytree = best_hyper_pars$colsample_bytree)
+toc()
+  #retrain model on best hyperparameters
+  print(paste0("Training on best hyperparameters on run number ", i, " of ", n_runs, " total runs for new training 1."))
+  tic(msg = paste0("training on best hyperparameters for run ", i))
+  xgb1[[i]] <- xgb.train(params = tuned_params,
+                    data = dtrain,
+                    nrounds = 100,
+                    watchlist = list(train=dtrain),
+                    print_every_n = 10,
+                    early_stopping_rounds = 20,
+                    maximize = F ,
+                    eval_metric = "auc")
+  xgb1_res_list[[i]] <- xgb1[[i]]
+  #get variable importance
+  mat <- xgb.importance(feature_names = xgb1[[i]]$feature_names, model = xgb1[[i]])
+  print(paste0("Top features of run number ", i, " of ", n_runs, " total runs are ",
+               mat$Feature[1], ", ",
+               mat$Feature[2], ", ",
+               mat$Feature[3], "."))
+  #xgb.plot.importance (importance_matrix = mat[1:20]) 
+  features_list[[i]] <- as.data.frame(mat) %>%
+    rownames_to_column(var = "rank") %>%
+    drop_na()
+  xgb1_best_scores[[i]] <- data.frame("features" = paste(features_list[[i]]$Feature, collapse = '; '),
+                                      "auc" = xgb1_res_list[[i]]$best_score) 
+  toc()
+  names(tune_res_list) <- paste0("run ", 1:i)
+  names(xgb1) <- paste0("run ", 1:i)
+  names(xgb1_res_list) <- paste0("run ", 1:i)
+  features_list_df <- bind_rows(features_list, .id = "run")
+  xgb1_best_scores_df <- bind_rows(xgb1_best_scores, .id = "run") %>%
+    arrange(desc(auc))
+}
+```
+
+```{r save hyperparameter tuning to select best features loop downselected new train 1}
+saveRDS(new_train_features_1, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                      "new_train_1_",
+                                      "features_seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                      gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+writexl::write_xlsx(xgb1_best_scores_df, paste0(resdir,
+                                                "new_train_1_",
+                                                "xgb1_best_scores_downselected_df_seed_", myseed, "_runs_", i, ".xlsx"))
+saveRDS(tune_res_list, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                     "new_train_1_",
+                                     "tune_res_list_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                     gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+saveRDS(xgb1_res_list, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                     "new_train_1_",
+                                     "xgb1_res_list_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                     gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+saveRDS(top_ten_features_df, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                           "new_train_1_",
+                                           "top_ten_features_df_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                           gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+```
+
+### Evaluate most frequently appearing modules using downselected features for new training set 1
+
+```{r see top models new train 1}
+xgb1_best_scores_df[1:2,2:3] %>%
+  kableExtra::kbl()
+```
+
+## Plot accuracy as confusion matrix for new training set 1
+
+```{r confusion matrix and importance new train 1}
+xgb1_best_scores_df <- xgb1_best_scores_df %>%
+  arrange(desc(auc))
+
+n_test_runs <- nrow(xgb1_best_scores_df)
+confusion_mat <- features <- features_concatenated <- c()
+confusion_mat_df <- data.frame(matrix(NA, nrow = n_test_runs, ncol = 19))
+if(train_on_split_or_full_set == "split"){
+  #check labels and class
+  set.seed(myseed)
+  temp_df <- data.frame("class" = test_dat$class, "labels" = test_labels)
+  table(temp_df$class, temp_df$label)
+  #confirmed that infected = 0, and protected = 1
+  rm("temp_df")
+  #model prediction
+  for(i in 1:n_test_runs){
+    print(paste0("running ", i , " of ", n_test_runs, " total runs."))
+    reduced_xgb1 <- xgb1[[as.integer(xgb1_best_scores_df[i,]$run)]] #reduce 
+    features[[i]] <- reduced_xgb1$feature_names #as vector
+    features_concatenated[[i]] <- data.frame("run" = as.integer(xgb1_best_scores_df[i,]$run),
+                                             "features" = paste0(reduced_xgb1$feature_names, collapse = "; ")) #as concatenated string
+    xgbDMat_test_dat <- xgb.DMatrix(data = new_test[,reduced_xgb1$feature_names], label = test_labels, nthread = 8)
+    xgbpred <- predict(reduced_xgb1, xgbDMat_test_dat)
+    xgbpred <- ifelse(xgbpred > 0.5,1,0)
+    xgbpred <- factor(ifelse(xgbpred==1, "protected", "not protected"))
+    test_labels_for_confusion_matrix <- factor(ifelse(test_labels==1, "protected", "not protected"))
+    confusion_mat[[i]] <- caret::confusionMatrix(xgbpred, test_labels_for_confusion_matrix)
+    confusion_mat_df[i,] <- c("run" = as.integer(xgb1_best_scores_df[i,]$run),
+                                          confusion_mat[[i]]$overall,
+                                          confusion_mat[[i]]$byClass)
+    colnames(confusion_mat_df) <- names(c("run" = as.integer(xgb1_best_scores_df[i,]$run),
+                                          confusion_mat[[i]]$overall,
+                                          confusion_mat[[i]]$byClass))
+    names(features)[i] <- paste0("run ", xgb1_best_scores_df[i,]$run)
+    names(features_concatenated)[i] <- xgb1_best_scores_df[i,]$run
+    names(confusion_mat)[i] <- paste0("run ", xgb1_best_scores_df[i,]$run)
+  }
+}
+confusion_mat_df <- confusion_mat_df %>%
+  arrange(desc(Accuracy))
+features_concatenated_bound <- bind_rows(features_concatenated, .id = "run") %>%
+  mutate(run = as.integer(run)) %>%
+  left_join(., confusion_mat_df, by = "run") %>%
+  arrange(desc(Accuracy))
+```
+
+```{r save test features and results on downselected new train 1}
+saveRDS(new_test_features_1, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                     "new_test_features_1_",
+                                     "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                     gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+saveRDS(confusion_mat, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                     "new_train_test_1_",
+                                     "confuse_mat_seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                     gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+writexl::write_xlsx(features_concatenated_bound, paste0(resdir,
+                                                        "new_train_test_1_",
+                                                        "downselected_test_confusion_mat_res_df_seed_", myseed, "_runs_", i,".xlsx"))
+```
+
+## Start for new training set 2
+
+```{r machine learning data setup new train 2}
+new_train_2_df <- new_train_features_2 %>%
+  dplyr::select(-class)
+  
+outcome_df <- new_train_features_2 %>%
+  dplyr::select(class)
+
+outcome <- outcome_df  %>%
+  rownames_to_column(var = "sample_id") %>%
+  deframe() %>%
+  as.factor() #1 = infected, 0 = never_infected
+#convert factor to numeric 
+new_train_2_labels <- as.numeric(outcome)-1 #note that 0=infected (not protected) and 1 = protected
+
+#check that outcome and model_df are in the same order
+if(all(names(outcome) == rownames(new_train_2_df))){
+  print("good to go!")
+} else {
+    print("please check to see if colnames match.")
+}
+```
+
+## Use xgboost for both feature selection, CV, and training on new training set 2
+
+```{r partition training and test new train 2}
+if(train_on_split_or_full_set == "split" | train_on_split_or_full_set == "original_split"){
+  new_train_dat_2 <- t(new_train_features_2) %>%
+    data.frame(check.names = FALSE) %>%
+    t() %>%
+    data.frame(check.names = FALSE) %>%
+    mutate(class = factor(class)) %>%
+    mutate_at(c(4:ncol(.)), as.numeric)
+  #convert data frame to data table and preserve rownames
+  setDT(new_train_dat_2, keep.rownames = TRUE) 
+  train_dat_samplenames <- new_train_dat_2$rn
+  new_train_dat_2 <- new_train_dat_2[,-1]
+  #sanity check
+  if(all(colnames(new_train_dat_2) == colnames(new_train_features_2)) &
+     all(train_dat_samplenames == rownames(new_train_features_2))){
+    print(paste0("'", train_on_split_or_full_set, "' training set good to go!"))
+    } else {
+      print("please check to see if training samples and features match.")
+      }
+
+  #assign data and labels using one hot encoding 
+  new_train_2_labels <- new_train_dat_2$class
+  new_train_2 <- model.matrix(~.+0,data = new_train_dat_2[,-c("class"),with=F])
+  colnames(new_train_2) <- gsub("\\`","",colnames(new_train_2))
+  #convert factor to numeric 
+  new_train_2_labels <- as.numeric(new_train_2_labels)-1 #note that 0=infected (not protected) and 1 = protected
+  #prepare matrix
+  new_dtrain_2 <- xgb.DMatrix(data = new_train_2, label = new_train_2_labels)
+
+  if(train_on_split_or_full_set == "split" | train_on_split_or_full_set == "original_split"){
+    new_test_dat_2 <- t(new_test_features_2) %>%
+    data.frame(check.names = FALSE) %>%
+    t() %>%
+    data.frame(check.names = FALSE) %>%
+    mutate(class = factor(class)) %>%
+    mutate_at(c(4:ncol(.)), as.numeric)
+    
+    setDT(new_test_dat_2, keep.rownames = TRUE)
+    new_test_dat_2_samplenames <- new_test_dat_2$rn
+    new_test_dat_2 <- new_test_dat_2[,-1]
+    
+    if(all(colnames(new_test_dat_2) == colnames(new_test_features_2)) &
+       all(new_test_dat_2_samplenames == rownames(new_test_features_2))){
+      print(paste0("'", train_on_split_or_full_set, "' test set good to go!"))
+      } else {
+        print("please check to see if test samples and features match.")
+      }
+    #check missing values
+    #table(is.na(new_test_dat_2))
+    #sapply(new_test_dat_2, function(x) sum(is.na(x))/length(x))*100
+    #see https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/ for         more data cleaning options
+      #assign data and labels using one hot encoding 
+    new_test_dat_2_labels <- new_test_dat_2$class #Levels: infected protected --> 1 2
+    new_test_2 <- model.matrix(~.+0, data = new_test_dat_2[,-c("class"), with=F])
+    colnames(new_test_2) <- gsub("\\`","",colnames(new_test_2))
+    #convert factor to numeric 
+    new_test_dat_2_labels <- as.numeric(new_test_dat_2_labels)-1 #note that 0=infected (not protected) and 1 = protected using one hot encoding 
+    #prepare matrix
+    new_dtest_2 <- xgb.DMatrix(data = new_test_2, label = new_test_dat_2_labels)
+  }
+}
+```
+
+### Build initial model for new training set 2
+
+```{r build initial model new train 2}
+#default parameters
+params <- list(booster = "gbtree", objective = "binary:logistic", eta=0.3, gamma=0, max_depth=6, min_child_weight=1, subsample=1, colsample_bytree=1)
+
+xgbcv_1 <- xgb.cv(params = params, data = new_dtrain_2, nrounds = 500, nfold = 5, showsd = T, stratified = T,
+                  print_every_n = 10, early_stopping_rounds = 30, maximize = F)
+min(xgbcv_1$test.error.mean)
+
+#first default - model training
+if(train_on_split_or_full_set == "split" | train_on_split_or_full_set == "original_slpit"){
+  xgb1_1 <- xgb.train(params = params, data = new_dtrain_2, nrounds = 100, watchlist = list(val=new_dtest_2, train=new_dtrain_2),
+                      print_every_n = 10, early_stopping_rounds = 10, maximize = F, eval_metric = "error")
+  #model prediction
+  xgbpred_1 <- predict (xgb1_1,dtest)
+  xgbpred_1 <- ifelse (xgbpred_1 > 0.5,1,0)
+  #confusion matrix
+  library(caret)
+  caret::confusionMatrix(as.factor(xgbpred_1), as.factor(new_test_dat_2_labels), dnn = c("test","train")) #note that 0=infected (not protected) and 1 = protected using one hot encoding
+  }
+if(train_on_split_or_full_set == "full"){
+  xgb1_1 <- xgb.train(params = params, data = new_dtrain_2, nrounds = 100, watchlist = list(train=new_dtrain_2), print_every_n = 10, early_stopping_rounds = 10,
+                    maximize = F, eval_metric = "error")
+}
+
+#view variable importance plot
+mat_1 <- xgb.importance(feature_names = xgb1_1$feature_names, model = xgb1_1)
+xgb.plot.importance(importance_matrix = mat_1[1:20]) 
+```
+
+```{r use mlr3 package new train 2}
+library(mlr)
+library(mlr3)
+#https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+
+#convert characters to factors
+fact_col <- colnames(new_train_dat_2)[sapply(new_train_dat_2,is.character)]
+for(i in fact_col) set(new_train_dat_2, j=i, value = factor(new_train_dat_2[[i]]))
+if(train_on_split_or_full_set != "full"){
+  for (i in fact_col) set(new_test_dat_2, j=i, value = factor(new_test_dat_2[[i]]))
+}
+
+#make dataframe to link original colnames to syntactical colnames; allows you to always map back to original names
+colname_key_df <- data.frame(og_colname = colnames(new_train_dat_2),
+                             syntactic_colname = make.names(colnames(new_train_dat_2), unique = TRUE))
+if(train_on_split_or_full_set != "full"){
+  if(all(colnames(new_train_dat_2) == colname_key_df$og_colname) &
+     all(colnames(new_train_dat_2) == colnames(new_test_dat_2))){
+    colnames(new_train_dat_2) <- colname_key_df$syntactic_colname
+    colnames(new_test_dat_2) <- colname_key_df$syntactic_colname
+    } else {
+      print("names don't match")
+    }
+}
+if(train_on_split_or_full_set == "full"){
+  if(all(colnames(new_train_dat_2) == colname_key_df$og_colname)){
+    colnames(new_train_dat_2) <- colname_key_df$syntactic_colname
+    } else {
+      print("names don't match")
+    }
+}
+#create tasks
+traintask_2 <- mlr::makeClassifTask(data = as.data.frame(new_train_dat_2), target = "class")
+if(train_on_split_or_full_set != "full"){
+  testtask_2 <- mlr::makeClassifTask(data = as.data.frame(new_test_dat_2), target = "class")
+}
+
+#do one hot encoding
+traintask_2 <- createDummyFeatures (obj = traintask_2) 
+if(train_on_split_or_full_set != "full"){
+  testtask_2 <- createDummyFeatures (obj = testtask_2)
+}
+
+#create learner
+lrn <- makeLearner("classif.xgboost",
+                   objective="binary:logistic",
+                   nrounds=1000,
+                   early_stopping_rounds = 100,
+                   eval_metric="error",
+                   predict.type = "response")
+
+#set parameter space
+#https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+#https://www.kaggle.com/code/prashant111/a-guide-on-xgboost-hyperparameters-tuning
+params <- makeParamSet(makeDiscreteParam("booster", values = c("gbtree")),
+                       makeIntegerParam("gamma",lower = 0L,upper = 3L),
+                       makeIntegerParam("max_depth",lower = 2L,upper = 5L),
+                       makeNumericParam("eta",lower = 0.01,upper = 0.2),
+                       makeNumericParam("min_child_weight",lower = 0L,upper = 8L),
+                       makeNumericParam("subsample",lower = 0.75,upper = 0.9),
+                       makeNumericParam("lambda",lower = 0, upper = 1),
+                       makeNumericParam("alpha",lower = 0, upper = 1),
+                       makeNumericParam("colsample_bytree",lower = 0.5,upper = 1))
+
+#set resampling strategy
+rdesc <- makeResampleDesc(method = "CV",
+                          predict = "test",
+                          iters = 4,
+                          stratify = T)
+```
+
+```{r hyperparameter tuning to select best features loop new train 2}
+#set parallel backend
+library(parallel)
+library(parallelMap)
+library(tictoc)
+parallelStartSocket(cpus = detectCores())
+
+#set options
+maxiterations <- 100 #number of iterations for each run of hyperparameter tuning
+runs <- 500 #number of runs
+
+#search strategy
+ctrl <- makeTuneControlRandom(maxit = maxiterations)
+tune_res_list <- best_hyper_pars_list <- xgb1_res_list <- top_ten_features_list <- c()
+tic(msg = paste0("total for ", runs, " total runs"))
+for(i in 1:runs){
+  run_seed <- sample(1:5000,1)
+  set.seed(run_seed)
+  #parameter tuning
+  print(paste0("Begin run number ", i, " of ", runs, " total runs for traintask_2."))
+  print(paste0("Seed for splitting train and test set was ", myseed, "."))
+  print(paste0("Seed for run is ", run_seed, "."))
+  print(paste0("maxiterations for hyperparameter tuning: ", maxiterations))
+  print(paste0("Running hyperparameter tuning on run number ", i, " of ", runs, " total runs."))
+  tic(msg = paste0("hyperparameter tuning for run ", i))
+  #set parameter space
+  #https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+  #https://www.kaggle.com/code/prashant111/a-guide-on-xgboost-hyperparameters-tuning
+  params <- makeParamSet( makeDiscreteParam("booster", values = c("gbtree")),
+                          makeIntegerParam("gamma",lower = 0L,upper = 3L),
+                          makeIntegerParam("max_depth",lower = 2L,upper = 5L),
+                          makeNumericParam("eta",lower = 0.01,upper = 0.2),
+                          makeNumericParam("min_child_weight",lower = 0L,upper = 4L),
+                          makeNumericParam("subsample",lower = 0.75,upper = 0.9),
+                          makeNumericParam("lambda",lower = 0, upper = 1),
+                          makeNumericParam("alpha",lower = 0, upper = 1),
+                          makeNumericParam("colsample_bytree",lower = 0.5,upper = 1))
+  
+  #set resampling strategy
+  rdesc <- makeResampleDesc(method = "CV",
+                            predict = "test",
+                            iters = 4,
+                            stratify = T)
+  tune_res_list[[i]] <- tuneParams(learner = lrn, task = traintask_2, resampling = rdesc, measures = acc, par.set = params, control = ctrl, show.info = T)
+  #set hyperparameters
+  lrn_tune <- setHyperPars(lrn, par.vals = tune_res_list[[i]]$x)
+  best_hyper_pars <- data.frame(iterations = maxiterations, lrn_tune$par.vals)
+  best_hyper_pars_list[[i]] <- best_hyper_pars
+  tuned_params <- list(booster = best_hyper_pars$booster,
+                       objective = best_hyper_pars$objective,
+                       eta = best_hyper_pars$eta,
+                       gamma = best_hyper_pars$gamma,
+                       max_depth = best_hyper_pars$max_depth,
+                       min_child_weight = best_hyper_pars$min_child_weight,
+                       subsample = best_hyper_pars$subsample,
+                       colsample_bytree = best_hyper_pars$colsample_bytree)
+  toc()
+  #retrain model on best hyperparameters
+  print(paste0("Training on best hyperparameters on run number ", i, " of ", runs, " total runs."))
+  tic(msg = paste0("training on best hyperparameters for run ", i))
+  xgb1 <- xgb.train(params = tuned_params,
+                    data = new_dtrain_2,
+                    nrounds = 100,
+                    watchlist = list(train=new_dtrain_2),
+                    print_every_n = 10,
+                    early_stopping_rounds = 20,
+                    maximize = F ,
+                    eval_metric = "error")
+  xgb1_res_list[[i]] <- xgb1
+  #get variable importance
+  mat <- xgb.importance(feature_names = xgb1$feature_names, model = xgb1)
+  print(paste0("Top 3 features of run number ", i, " of ", runs, " total runs are ",
+               mat$Feature[1], ", ",
+               mat$Feature[2], ", ",
+               mat$Feature[3], "."))
+  #xgb.plot.importance (importance_matrix = mat[1:20]) 
+  top_ten_features_list[[i]] <- as.data.frame(mat[1:10]) %>%
+    rownames_to_column(var = "rank") %>%
+    drop_na()
+  toc()
+  names(tune_res_list) <- paste0("run ", 1:i)
+  names(xgb1_res_list) <- paste0("run ", 1:i)
+  top_ten_features_df <- bind_rows(top_ten_features_list, .id = "run")
+  saveRDS(tune_res_list, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                       "new_train_2_",
+                                       "tune_res_list_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                       gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")), ".rds"))
+  saveRDS(xgb1_res_list, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                       "new_train_2_",
+                                       "xgb1_res_list_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                       gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+  saveRDS(top_ten_features_df, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                             "new_train_2_",
+                                             "top_ten_features_df_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                             gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+}
+toc()
+```
+
+### Evaluate most frequently appearing modules on new training set 2
+
+```{r frequent mods new train 2}
+total_runs <- max(as.integer(top_ten_features_df$run))
+summary_top_ten <- top_ten_features_df %>%
+  group_by(Feature) %>%
+  summarise(appearances = n(), sum_gain = sum(Gain),total_runs = total_runs) %>%
+  ungroup() %>%
+  mutate(avg_gain = sum_gain/total_runs, pct_appear = appearances/total_runs) %>%
+  arrange(desc(appearances), desc(avg_gain))
+writexl::write_xlsx(summary_top_ten, paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                            "new_train_2_",
+                                            "summary_top_ten_", "seed_", myseed, "_", runs, "_htune_iters_", maxiterations, "_",
+                                            gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".xlsx"))
+```
+
+### Based on initial training, select features appearing within top 10 of at least 10% of runs and train again on these downselected features to optimize model for new training set 2
+
+Experiment with new training set 2 using seed 2441 and 500 runs yielded XXX features appearing within the top 10 at least once, with XX of these appearing in at least 50 of 500 runs.
+
+#### Read in feature list on new training set 2
+
+```{r read in feature list new train 2}
+resdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/"
+feature_freq <- readxl::read_xlsx(paste0(resdir,
+                                         "split_seed_4524_500_runs/new_train_2/",
+                                         "new_train_2_",
+                                         "summary_top_ten_seed_4524_500_htune_iters_100_", "Thu-Aug-10-09-45-08-2023", ".xlsx"))
+feature_freq_10pct <- feature_freq %>%
+  filter(pct_appear >= 0.10)
+```
+
+```{r learner parameter space resampling new train 2}
+#create learner
+lrn <- makeLearner("classif.xgboost",
+                   objective="binary:logistic",
+                   nrounds=1000,
+                   early_stopping_rounds = 100,
+                   eval_metric="error",
+                   predict.type = "response")
+
+#set parameter space
+#https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+#https://www.kaggle.com/code/prashant111/a-guide-on-xgboost-hyperparameters-tuning
+params <- makeParamSet( makeDiscreteParam("booster", values = c("gbtree")),
+                        makeIntegerParam("gamma",lower = 0L,upper = 3L),
+                        makeIntegerParam("max_depth",lower = 2L,upper = 5L),
+                        makeNumericParam("eta",lower = 0.01,upper = 0.2),
+                        makeNumericParam("min_child_weight",lower = 0L,upper = 4L),
+                        makeNumericParam("subsample",lower = 0.75,upper = 0.9),
+                        makeNumericParam("lambda",lower = 0, upper = 1),
+                        makeNumericParam("alpha",lower = 0, upper = 1),
+                        makeNumericParam("colsample_bytree",lower = 0.5,upper = 1))
+#set resampling strategy
+rdesc <- makeResampleDesc(method = "CV",
+                          predict = "test",
+                          iters = 4,
+                          stratify = T)
+```
+
+## Cross-validate on n sampled downselected features for new training set 2
+
+```{r cv on n sampled features new train 2}
+#set parallel backend
+library(parallel)
+library(parallelMap)
+library(tictoc)
+parallelStartSocket(cpus = detectCores())
+
+#set options
+n_runs <- 500 #number of runs
+n_feat_sampled <- 3:7 #range for number of features sampled
+maxiterations <- 200 #number of iterations for each run of hyperparameter tuning
+tune_res_list <- best_hyper_pars_list <- xgb1 <- xgb1_best_scores <- xgb1_res_list <- features_list <- c()
+for(i in 1:n_runs){
+  tic(msg = paste0("total for ", n_runs, " total runs"))
+  #parameter tuning
+  print(paste0("Begin run number ", i, " of ", n_runs, " total runs."))
+  new_train_feat <- c("class", sample(feature_freq_10pct$Feature, sample(n_feat_sampled, 1), replace=FALSE))
+  train_dat_temp <- t(new_train_features_2[,new_train_feat]) %>%
+    data.frame(check.names = FALSE) %>%
+    t() %>%
+    data.frame(check.names = FALSE) %>%
+    mutate(class = factor(class)) %>%
+    mutate_at(c(2:ncol(.)), as.numeric)
+  #convert data frame to data table and preserve rownames
+  setDT(train_dat_temp, keep.rownames = TRUE, check.names=FALSE) 
+  train_dat_temp_samplenames <- train_dat_temp$rn
+  train_dat_temp <- train_dat_temp[,-1]
+  #sanity check
+  if(all(colnames(train_dat_temp) == new_train_feat) &
+     all(train_dat_temp_samplenames == rownames(new_train_features_2))){
+    print(paste0("'", train_on_split_or_full_set, "' training set good to go!"))
+    } else {
+      print("please check to see if training samples and features match.")
+      }
+  #check missing values 
+  #table(is.na(train_dat_temp))
+  #sapply(train_dat_temp, function(x) sum(is.na(x))/length(x))*100
+  
+  #assign data and labels using one hot encoding 
+  train_labels <- train_dat_temp$class
+  new_train <- model.matrix(~.+0, data = train_dat_temp[,-c("class"),with=F])
+  colnames(new_train) <- gsub("\\`","",colnames(new_train))
+  #convert factor to numeric 
+  train_labels <- as.numeric(train_labels)-1 #note that 0=infected (not protected) and 1 = protected
+  #prepare matrix
+  dtrain <- xgb.DMatrix(data = new_train, label = train_labels)
+  #convert characters to factors
+  fact_col <- colnames(train_dat_temp)[sapply(train_dat_temp,is.character)]
+  for(k in fact_col) set(train_dat_temp, j=k, value = factor(train_dat_temp[[k]]))
+  #make dataframe to link original colnames to syntactical colnames; allows you to always map back to original names
+  colname_key_df <- data.frame(og_colname = colnames(train_dat_temp),
+                               syntactic_colname = make.names(colnames(train_dat_temp), unique = TRUE))
+  if(all(colnames(train_dat_temp) == colname_key_df$og_colname)){
+    colnames(train_dat_temp) <- colname_key_df$syntactic_colname
+    } else {
+      print("names don't match")
+      }
+#create tasks
+traintask <- mlr::makeClassifTask(data = as.data.frame(train_dat_temp), target = "class")
+
+#do one hot encoding`<br/> 
+traintask <- createDummyFeatures (obj = traintask)
+
+#search strategy
+ctrl <- makeTuneControlRandom(maxit = maxiterations)
+print(paste0("Running hyperparameter tuning on run number ", i, " of ", n_runs, " total runs for new training 2."))
+print(paste0("maxiterations for hyperparameter tuning: ", maxiterations))
+tic(msg = paste0("hyperparameter tuning for run ", i))
+tune_res_list[[i]] <- tuneParams(learner = lrn, task = traintask, resampling = rdesc, measures = acc, par.set = params, control = ctrl, show.info = T)
+#set hyperparameters
+lrn_tune <- setHyperPars(lrn, par.vals = tune_res_list[[i]]$x)
+best_hyper_pars <- data.frame(iterations = maxiterations, lrn_tune$par.vals)
+best_hyper_pars_list[[i]] <- best_hyper_pars
+tuned_params <- list(booster = best_hyper_pars$booster,
+                     objective = best_hyper_pars$objective,
+                     eta = best_hyper_pars$eta,
+                     gamma = best_hyper_pars$gamma,
+                     max_depth = best_hyper_pars$max_depth,
+                     min_child_weight = best_hyper_pars$min_child_weight,
+                     subsample = best_hyper_pars$subsample,
+                     colsample_bytree = best_hyper_pars$colsample_bytree)
+toc()
+  #retrain model on best hyperparameters
+  print(paste0("Training on best hyperparameters on run number ", i, " of ", n_runs, " total runs for new training 2."))
+  tic(msg = paste0("training on best hyperparameters for run ", i))
+  xgb1[[i]] <- xgb.train(params = tuned_params,
+                    data = dtrain,
+                    nrounds = 100,
+                    watchlist = list(train=dtrain),
+                    print_every_n = 10,
+                    early_stopping_rounds = 20,
+                    maximize = F ,
+                    eval_metric = "auc")
+  xgb1_res_list[[i]] <- xgb1[[i]]
+  #get variable importance
+  mat <- xgb.importance(feature_names = xgb1[[i]]$feature_names, model = xgb1[[i]])
+  print(paste0("Top features of run number ", i, " of ", n_runs, " total runs are ",
+               mat$Feature[1], ", ",
+               mat$Feature[2], ", ",
+               mat$Feature[3], "."))
+  #xgb.plot.importance (importance_matrix = mat[1:20]) 
+  features_list[[i]] <- as.data.frame(mat) %>%
+    rownames_to_column(var = "rank") %>%
+    drop_na()
+  xgb1_best_scores[[i]] <- data.frame("features" = paste(features_list[[i]]$Feature, collapse = '; '),
+                                      "auc" = xgb1_res_list[[i]]$best_score) 
+  toc()
+  names(tune_res_list) <- paste0("run ", 1:i)
+  names(xgb1) <- paste0("run ", 1:i)
+  names(xgb1_res_list) <- paste0("run ", 1:i)
+  features_list_df <- bind_rows(features_list, .id = "run")
+  xgb1_best_scores_df <- bind_rows(xgb1_best_scores, .id = "run") %>%
+    arrange(desc(auc))
+}
+```
+
+```{r save hyperparameter tuning to select best features loop downselected new train 2}
+saveRDS(new_train_features_2, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                      "new_train_2_",
+                                      "features_seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                      gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+writexl::write_xlsx(xgb1_best_scores_df, paste0(resdir,
+                                                "new_train_2_",
+                                                "xgb1_best_scores_downselected_df_seed_", myseed, "_runs_", i, ".xlsx"))
+saveRDS(tune_res_list, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                     "new_train_2_",
+                                     "tune_res_list_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                     gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+saveRDS(xgb1_res_list, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                     "new_train_2_",
+                                     "xgb1_res_list_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                     gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+saveRDS(top_ten_features_df, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                           "new_train_2_",
+                                           "top_ten_features_df_", "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                           gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+```
+
+## Plot accuracy as confusion matrix for new training set 2
+
+```{r confusion matrix and importance new train 2}
+xgb1_best_scores_df <- xgb1_best_scores_df %>%
+  arrange(desc(auc))
+
+n_test_runs <- nrow(xgb1_best_scores_df)
+confusion_mat <- features <- features_concatenated <- c()
+confusion_mat_df <- data.frame(matrix(NA, nrow = n_test_runs, ncol = 19))
+if(train_on_split_or_full_set == "split"){
+  #check labels and class
+  set.seed(myseed)
+  temp_df <- data.frame("class" = test_dat$class, "labels" = test_labels)
+  table(temp_df$class, temp_df$label)
+  #confirmed that infected = 0, and protected = 1
+  rm("temp_df")
+  #model prediction
+  for(i in 1:n_test_runs){
+    print(paste0("running ", i , " of ", n_test_runs, " total runs."))
+    reduced_xgb1 <- xgb1[[as.integer(xgb1_best_scores_df[i,]$run)]] #reduce 
+    features[[i]] <- reduced_xgb1$feature_names #as vector
+    features_concatenated[[i]] <- data.frame("run" = as.integer(xgb1_best_scores_df[i,]$run),
+                                             "features" = paste0(reduced_xgb1$feature_names, collapse = "; ")) #as concatenated string
+    xgbDMat_test_dat <- xgb.DMatrix(data = new_test[,reduced_xgb1$feature_names], label = test_labels, nthread = 8)
+    xgbpred <- predict(reduced_xgb1, xgbDMat_test_dat)
+    xgbpred <- ifelse(xgbpred > 0.5,1,0)
+    xgbpred <- factor(ifelse(xgbpred==1, "protected", "not protected"))
+    test_labels_for_confusion_matrix <- factor(ifelse(test_labels==1, "protected", "not protected"))
+    confusion_mat[[i]] <- caret::confusionMatrix(xgbpred, test_labels_for_confusion_matrix)
+    confusion_mat_df[i,] <- c("run" = as.integer(xgb1_best_scores_df[i,]$run),
+                                          confusion_mat[[i]]$overall,
+                                          confusion_mat[[i]]$byClass)
+    colnames(confusion_mat_df) <- names(c("run" = as.integer(xgb1_best_scores_df[i,]$run),
+                                          confusion_mat[[i]]$overall,
+                                          confusion_mat[[i]]$byClass))
+    names(features)[i] <- paste0("run ", xgb1_best_scores_df[i,]$run)
+    names(features_concatenated)[i] <- xgb1_best_scores_df[i,]$run
+    names(confusion_mat)[i] <- paste0("run ", xgb1_best_scores_df[i,]$run)
+  }
+}
+confusion_mat_df <- confusion_mat_df %>%
+  arrange(desc(Accuracy))
+features_concatenated_bound <- bind_rows(features_concatenated, .id = "run") %>%
+  mutate(run = as.integer(run)) %>%
+  left_join(., confusion_mat_df, by = "run") %>%
+  arrange(desc(Accuracy))
+```
+
+```{r save test features and results on downselected new train 2}
+saveRDS(new_test_features_2, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                     "new_test_features_2_",
+                                     "seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                     gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+saveRDS(confusion_mat, file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                                     "new_train_test_2_",
+                                     "confuse_mat_seed_", myseed, "_runs_", i, "_htune_iters_", maxiterations, "_",
+                                     gsub("\\:","-", format(Sys.time(),"%a-%b-%d-%X-%Y")),".rds"))
+writexl::write_xlsx(features_concatenated_bound, paste0(resdir,
+                                                        "new_train_test_2_",
+                                                        "downselected_test_confusion_mat_res_df_seed_", myseed, "_runs_", i,".xlsx"))
+```
+
+
+
+
+# Sandbox
+
+## Determine xgboost parameters
+
+https://www.r-bloggers.com/2018/05/tuning-xgboost-in-r-part-i/
+
+https://www.r-bloggers.com/2020/10/an-r-pipeline-for-xgboost-part-i/
+
+https://www.r-bloggers.com/2020/03/grid-search-and-bayesian-hyperparameter-optimization-using-tune-and-caret-packages/
+
+## Use built-in xgb cross validation function to calcuate best nround and cv error
+
+```{r xgbcv with hyperparameter tuning, message=FALSE, warning=FALSE}
+if(train_on_split_or_full_set == "split" | train_on_split_or_full_set == "full"){
+  all_min_errors <-c()
+  best_error <- 1
+  #check labels and class
+  temp_df <- data.frame("class" = train_dat$class, "labels" = train_labels)
+  table(temp_df$class, temp_df$label)
+  #confirmed that infected = 0, and protected = 1
+  rm("temp_df")
+  #assign data and labels using one hot encoding 
+  train_labels <- train_dat$class
+  new_train <- model.matrix(~.+0,data = train_dat[,-c("class"),with=F])
+  #convert factor to numeric 
+  train_labels <- as.numeric(train_labels)-1 #note that 0=infected (not protected) and 1 = protected
+  #prepare matrix
+  xgbDMat_train_dat <- xgb.DMatrix(data = as.matrix(new_train), label = train_labels, nthread = 8)
+  
+  for (iter in 1:my_iterations) {
+    param <- list(objective = 'binary:logistic',
+                  max_depth = sample(1:3,1),
+                  eta = runif(1, 0.01, 0.3),
+                  gamma = runif(1, 0.0, 5),
+                  subsample = runif(1, .6, .9),
+                  colsample_bytree = runif(1, .5, .8),
+                  min_child_weight = sample(1:10, 1),
+                  lambda = sample(c(0, 0.1, 0.2, 0.5, 1, 2, 5, 10), 1),
+                  lambda_bias = sample(c(0, 0.1, 0.2, 0.5, 1, 2, 5, 10), 1),
+                  alpha = sample(c(0, 0.1, 0.2, 0.5, 1, 2, 5, 10), 1)
+                  )
+    cv.nround = 1000
+    cv.nfold = 5
+    seed.number = sample.int(10000,1)[[1]]
+    set.seed(seed.number)
+    bst.cv <- xgb.cv(params = param,
+                   data = xgbDMat_train_dat,
+                   nthread = 8,
+                   verbose = TRUE,
+                   showsd = TRUE,
+                   stratified = TRUE,
+                   print_every_n = 20,
+                   nfold = cv.nfold,
+                   nrounds = cv.nround,
+                   early_stopping_rounds = 30,
+                   maximize = FALSE,
+                   metrics = "error")
+  
+    min_error <- min(bst.cv$evaluation_log$test_error_mean) #get iteration with lowest test error
+    all_min_errors[[iter]] <- min_error
+    print(glue::glue("current iter: ", iter, " best error: ", best_error))
+   
+    if (min_error < best_error) {
+      best_error <- min_error
+      best_param <- param
+      best_param_df <- data.frame(param,
+                                  "number_iterations" = my_iterations,
+                                  "best_iteration" = iter,
+                                  "best_error" = best_error,
+                                  "best_cv_nround" = bst.cv$best_iteration,
+                                  "best_seed_number" = seed.number)
+      best_iter  <- iter
+      best_nround  <- bst.cv$best_iteration
+      best_seednumber  <- seed.number
+      best_xgb_cv_eval_logs <- bst.cv$evaluation_log[bst.cv$evaluation_log$iter == bst.cv$best_iteration,] #save evaluation log
+    }
+    }
+}
+save(best_error, best_param, best_param_df, best_iter, best_nround, best_seednumber, best_xgb_cv_eval_logs, bst.cv, all_min_errors,
+     file = paste0("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/ML results Tuan/",
+                   "xgb cv only results TMT ", Sys.Date(), " ", my_iterations, "iterations.RData")
+     )
+```
+
+## Plot validation error and training error against the number of rounds
+
+```{r plot validation and training error per round}
+if(train_on_split_or_full_set == "split" | train_on_split_or_full_set == "full"){
+  cv.nround <- 2000
+  cv.nfold <- 5
+  bst.cv <- xgb.cv(params = best_param,
+                   data=xgbDMat_train_dat,
+                   nthread=8,
+                   verbose = TRUE,
+                   showsd = TRUE,
+                   stratified = TRUE,
+                   print_every_n = 5,
+                   nfold = cv.nfold,
+                   nrounds = cv.nround,
+                   early_stopping_rounds = 30,
+                   maximize = FALSE,
+                   metrics = "error")
+  
+  res_df <- data.frame(training_error = bst.cv$evaluation_log$train_error_mean, 
+                       validation_error = bst.cv$evaluation_log$test_error_mean, # Don't confuse this with the test data set. 
+                       iteration = bst.cv$evaluation_log$iter) %>%
+    mutate(min = validation_error == min(validation_error))
+  best_nrounds <- res_df %>%
+    filter(min) %>%
+    pull(iteration)
+  res_df_longer <- pivot_longer(data = res_df, 
+                                cols = c(training_error, validation_error), 
+                                names_to = "error_type",
+                                values_to = "error")
+  
+  g <- ggplot(res_df_longer, aes(x = iteration)) +        # Look @ it overfit.
+    geom_line(aes(y = error, group = error_type, colour = error_type)) +
+    geom_vline(xintercept = best_nrounds, colour = "green") +
+    #geom_label(aes(label = str_interp("${best_nrounds} iterations gives minimum validation error"), y = 0.2, x = best_nrounds, hjust = 0.1)) +
+    labs(
+      x = "nrounds",
+      y = "Error",
+      title = "Test & Train Errors",
+      subtitle = str_interp("Note how the training error keeps decreasing after ${best_nrounds} iterations, but the validation error starts \ncreeping up. This is a sign of overfitting.")
+    ) +
+    scale_colour_discrete("Error Type: ") +
+    theme_bw()
+  g
+}
+```
+
+## Evaluate feature importance from training set
+
+```{r feature importance from training set}
+library(caret)
+if(train_on_split_or_full_set == "split" | train_on_split_or_full_set == "full"){
+  #first default - model training
+  set.seed(myseed)
+  print(paste0("using nround = ", best_nrounds[1]))
+  xgb1 <- xgb.train(params = best_param,
+                    data = xgbDMat_train_dat,
+                    nrounds = best_nrounds[1],
+                    watchlist = list(train=xgbDMat_train_dat),
+                    print_every_n = 10,
+                    early_stopping_rounds = 10,
+                    maximize = FALSE,
+                    eval_metric = "error")
+  
+  #view variable importance plot
+  mat <- xgb.importance (feature_names = colnames(xgbDMat_train_dat),model = xgb1)
+  gg <- xgb.ggplot.importance(importance_matrix = mat[1:10], top_n = 10, left_margin = 18, n_clusters = c(1:20),
+                              measure = "Gain", rel_to_first = FALSE)
+  gg + ggtitle("feature importance") +
+    theme_bw() +
+    theme(legend.position = "none") 
+}
+```
+
+### New pipeline using superml
+
+```{r use superml}
+library(data.table)
+library(caret)
+library(superml)
+library(Metrics)
+
+xgb <- XGBTrainer$new(objective = 'binary:logistic'
+                      , n_estimators = 500
+                      , eval_metric = "rmse"
+                      , maximize = F
+                      , learning_rate = 0.1
+                      ,max_depth = 6)
+xtrain <- train_dat %>%
+  mutate(class = ifelse(class == "protected", 1, 0)) %>%
+  mutate(sex = ifelse(sex == "F", 1, 0)) %>%
+  mutate(site = ifelse(site == "Siaya", 1, 0))
+xtest <- test_dat %>%
+  mutate(class = ifelse(class == "protected", 1, 0)) %>%
+  mutate(sex = ifelse(sex == "F", 1, 0)) %>%
+  mutate(site = ifelse(site == "Siaya", 1, 0))
+
+xgb$fit(X = xtrain, y = "class", valid = xtest)
+pred <- xgb$predict(xtest)
+rmse(actual = xtest$class, predicted = pred)
+
+gb <- XGBTrainer$new()
+
+gst <- GridSearchCV$new(trainer = gb,
+                        parameters = list(objective = 'binary:logistic',
+                                          n_estimators = 200,
+                                          learning_rate = c(0.2,0.3,0.4),
+                                          gamma = c(0,1,2,3,5),
+                                          max_depth = c(1,2,3,5),
+                                          min_child_wieght = c(1,2,3,4,5),
+                                          subsample = c(0.4, 0.5, 0.6, 0.7, 0.8, 0.9),
+                                          colsample_bytree = c(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+                                          lambda = c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1),
+                                          alpha = c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)),
+                        n_folds = 5,
+                        scoring = c('accuracy','auc'))
+gst <- GridSearchCV$new(trainer = xgb,
+                             parameters = list(n_estimators = c(10,50),
+                                               max_depth = c(5,2)),
+                             n_folds = 3,
+                             scoring = c('accuracy','auc'))
+gst$fit(xtrain, "class")
+gst$best_iteration()
+
+  param <- list(objective = 'binary:logistic',
+                  max_depth = sample(1:3,1),
+                  eta = runif(1, 0.01, 0.3),
+                  gamma = runif(1, 0.0, 5),
+                  subsample = runif(1, .6, .9),
+                  colsample_bytree = runif(1, .5, .8),
+                  min_child_weight = sample(1:10, 1),
+                  lambda = sample(c(0, 0.1, 0.2, 0.5, 1, 2, 5, 10), 1),
+                  lambda_bias = sample(c(0, 0.1, 0.2, 0.5, 1, 2, 5, 10), 1),
+                  alpha = sample(c(0, 0.1, 0.2, 0.5, 1, 2, 5, 10), 1))
+```
+
+```{r use caret}
+#https://www.projectpro.io/recipes/tune-hyper-parameters-grid-search-r#mcetoc_1g21qk36ha
+#https://www.kaggle.com/code/pelkoja/visual-xgboost-tuning-with-caret
+
+library(xgboost)
+library(caret)
+library(tidyverse)
+
+xtrain <- train_dat %>%
+  mutate(class = factor(ifelse(class == "protected", 1, 0))) %>%
+  mutate(sex = ifelse(sex == "F", 1, 0)) %>%
+  mutate(site = ifelse(site == "Siaya", 1, 0))
+xtest <- test_dat %>%
+  mutate(class = factor(ifelse(class == "protected", 1, 0))) %>%
+  mutate(sex = ifelse(sex == "F", 1, 0)) %>%
+  mutate(site = ifelse(site == "Siaya", 1, 0))
+
+train_control <- trainControl(method = "cv", number = 5, search = "grid")
+#https://www.kaggle.com/code/pelkoja/visual-xgboost-tuning-with-caret
+#more suggestions for parameters
+#https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/beginners-tutorial-on-xgboost-parameter-tuning-r/tutorial/
+nrounds <- 1000
+tune_grid <- expand.grid(
+  nrounds = seq(from = 200, to = nrounds, by = 50),
+  eta = c(0.025, 0.05, 0.1, 0.3),
+  max_depth = c(2, 3, 4, 5, 6),
+  gamma = 0,
+  colsample_bytree = 1,
+  min_child_weight = 1,
+  subsample = 1
+)
+
+tune_control <- caret::trainControl(
+  method = "cv", # cross-validation
+  number = 5, # with n folds 
+  #index = createFolds(tr_treated$Id_clean), # fix the folds
+  verboseIter = FALSE, # no training log
+  allowParallel = TRUE, # FALSE for reproducible results 
+  search = "grid" #default
+)
+
+xgb_tune <- caret::train(
+  class~.,
+  data = xtrain,
+  trControl = tune_control,
+  tuneGrid = tune_grid,
+  method = "xgbTree",
+  verbose = TRUE
+)
+
+# helper function for the plots
+tuneplot <- function(x, probs = .90) {
+  ggplot(x) +
+    coord_cartesian(ylim = c(quantile(x$results$RMSE, probs = probs), min(x$results$RMSE))) +
+    theme_bw()
+}
+
+tuneplot(xgb_tune)
+
+xgb_tune$bestTune
+
+# training a XGboost Regression tree model while tuning parameters
+modelinfo <- getModelInfo(model = "xgbTree")
+
+model <- train(class~., data = xtrain, method = "xgbTree", trControl = train_control, tuneGrid = gbmGrid)
+
+#Error: The tuning parameter grid should have columns nrounds, max_depth, eta, gamma, colsample_bytree, min_child_weight, subsample
+
+# summarising the results
+print(model)
+```
+

@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(ggplot2)
 library(ggpubr)
-figdir <- "/Volumes/GoogleDrive/My Drive/Manuscripts/KSPZV1 Manuscript/Med Revised Submission 2022/Figures/Revised Figure Panels/"
+figdir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Figures JCI resubmission/Figure Panels/"
 ```
 
 ## Objective
@@ -33,7 +33,7 @@ read_excel_allsheets <- function(filename, tibble = FALSE) {
     x
 }
 
-mysheets <- read_excel_allsheets("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Elizabeth Leetah Mouse Experiments/Parasitemia/KSPZV1 Parasitemia.xlsx")
+mysheets <- read_excel_allsheets("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Elizabeth Leetah Mouse Experiments/Parasitemia/KSPZV1 Parasitemia.xlsx")
 
 for(i in names(mysheets)){
   names(mysheets[[i]]) <- c("sample", "parasitemia")
@@ -142,7 +142,7 @@ summarized_dat %>%
 ## Look at qPCR data
 
 ```{r readin pcr data, echo=TRUE, message=FALSE, warning=FALSE}
-pcr_dat <- readRDS("/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Elizabeth Leetah Mouse Experiments/Parasitemia/Mouse PCR parasitemia/18s March Mouse Exp repeat qPCR dataframe 04152022.rds")
+pcr_dat <- readRDS("/Users/tuantran/Library/CloudStorage/GoogleDrive-tuantran@iu.edu/Shared drives/[Sec] IN-MED-INF-TRANLAB/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Elizabeth Leetah Mouse Experiments/Parasitemia/Mouse PCR parasitemia/18s March Mouse Exp repeat qPCR dataframe 04152022.rds")
 
 pcr_dat <- pcr_dat %>%
   mutate(mouse = gsub("D.*", "",`Sample Name`)) %>%
@@ -152,7 +152,7 @@ pcr_dat2 <- pcr_dat %>%
   group_by(`Mouse number`, treatment, dosegroup) %>%
   arrange(day) %>%
   filter(Parasitemia==1) %>%
-  slice(1)
+  dplyr::slice(1)
 
 pcr_dat3 <- pcr_dat %>%
   mutate(mouse = gsub("D.*", "",`Sample Name`)) %>%
@@ -160,14 +160,14 @@ pcr_dat3 <- pcr_dat %>%
   group_by(`Mouse number`, treatment, dosegroup) %>%
   arrange(desc(day)) %>%
   filter(Parasitemia==0) %>%
-  slice(1)
+  dplyr::slice(1)
 
 pcr_dat_surv <- rbind(pcr_dat2, pcr_dat3) %>%
   select(c(mouse, dosegroup, treatment, day, Parasitemia)) %>%
   arrange(dosegroup, treatment, day)
 ```
 
-```{r plot surv lps}
+```{r plotdat surv lps}
 library(survival)
 library(survminer)
 
@@ -188,10 +188,17 @@ pic_high_survplot <- ggsurvplot(survfit1,risk.table = FALSE, pval = TRUE,
                                 xlab = "day p.i",
                                 ylab = "% free of parasitemia",
                                 censor = TRUE)
+```
 
-# cairo_pdf(filename = paste0(figdir, "Fig 7C KM plot high PySPZ Saline LPS.pdf"), width = 4, height = 4)
-# pic_high_survplot
-# dev.off()
+```{r save survdat lps, include=FALSE, echo=FALSE, eval=FALSE}
+pic_high_survplot$data.survtable %>%
+  writexl::write_xlsx("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 7D Mouse Survplot LPS vs Saline.xlsx")
+```
+
+```{r save surv lps, include=FALSE, echo=FALSE, eval=FALSE}
+cairo_pdf(filename = paste0(figdir, "Fig 7D KM plot high PySPZ Saline LPS.pdf"), width = 4, height = 4)
+pic_high_survplot
+dev.off()
 ```
 
 ```{r plot surv lps}
@@ -215,7 +222,7 @@ pic_low_survplot <- ggsurvplot(survfit1,risk.table = FALSE, pval = TRUE, font.fa
                                 ylab = "% free of parasitemia",
                                 censor = TRUE)
 
-cairo_pdf(filename = paste0(figdir, "Fig 7C KM plot low PySPZ Saline LPS.pdf"), width = 4, height = 4)
+cairo_pdf(filename = paste0(figdir, "Fig 7D KM plot low PySPZ Saline LPS.pdf"), width = 4, height = 4)
 pic_low_survplot
 dev.off()
 ```

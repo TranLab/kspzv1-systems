@@ -303,6 +303,14 @@ combinedPlot
 ggsave(combinedPlot, file = paste0(figdir, "Fig 7A CD14 vs CSP IgG Interaction and P vs NP BoxPlot 2x2.pdf"), device = cairo_pdf, units = "in", height = 4, width = 4.5)
 ```
 
+```{r save figure 8A data, include=FALSE, eval=FALSE, echo=FALSE}
+Mono_v_CSP_plot_nrow2$data %>%
+  writexl::write_xlsx("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 8A CSP Ab vs CD14 monocytes.xlsx")
+
+CSP_pos_by_dose_plot_nrow2$data %>%
+  writexl::write_xlsx("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure S9A CSP Ab vs CD14 monocytes.xlsx")
+```
+
 Perform correlations between % CD14+ monocytes vs CSP-specific IgG stratified by teratment and outcome (per reviewer request). Shown are coefficients and p values for Pearson's correlations.
 
 ```{r perform spearman correlations on Figure 7A per reviewer request, include=FALSE}
@@ -431,7 +439,7 @@ persp(x = as.numeric(rownames(plot_matrix_hd)),
 cairo_pdf(filename = paste0(figdir, "3d fit monocyte vs csp igg placebo theta ", my_theta, " phi ", my_phi, ".pdf"), height = 6, width = 6)
 persp(x = as.numeric(rownames(plot_matrix_placebo)), 
   y = as.numeric(colnames(plot_matrix_placebo)), 
-  z = plot_matrix,
+  z = plot_matrix_placebo,
   xlab = "CSP-specific IgG",
   ylab = "monocytes",
   zlab = "protection",
