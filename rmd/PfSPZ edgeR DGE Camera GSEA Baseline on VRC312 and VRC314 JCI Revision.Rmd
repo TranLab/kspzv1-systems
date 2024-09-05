@@ -21,7 +21,7 @@ Notes:
 2. Used -log10(p) * sign(logFC) as rank metric for GSEA.  
 3. Added BSPZV1 study for comparison based on reviewer feedback. 
 4. Use FDR<10% across at least 2 studies as final filter for visualization.  
-5. Added CAMERA results to complement pre-ranked GSEA results. This was motivated by prior reviewer's comments that pre-ranked GSEA did not account for inter-gene correlations. Results here show that CAMERA results is similar to pre-ranked GSEA results.
+5. Added CAMERA results to complement pre-ranked GSEA results. This was motivated by prior reviewer's comments that pre-ranked GSEA did not account for inter-gene correlations. Results here show that CAMERA results are similar to pre-ranked GSEA results.
 
 # Baseline Analysis
 
@@ -802,6 +802,8 @@ study_tab_plot
 
 Filter based on padj < 0.10.
 
+## Code for GSEA bubble plot
+
 ```{r load bspzv1 gsea data locally, eval=FALSE, include=FALSE, echo=FALSE}
 GSEAtab_BSPZV1 <- read_rds("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/BSPZV1 analysis/BSPZV1 Data/BSPZV1_GSEA_PvNP.rds")
 ```
@@ -966,7 +968,7 @@ writexl::write_xlsx(study_tab, paste0(plot_dat_dir, "Figure S4A Info Table for K
 writexl::write_xlsx(GSEA_KPSZV1_VRC312_VRC314_BPSZV1, paste0(plot_dat_dir, "Figure S4BC GSEA Bubble Plots for KSZPV1 VRC312 VRC314 BSPZV1.xlsx"))
 ```
 
-### Plot GSEA bubbleplots (Figures S4B-C)
+## Plot GSEA bubbleplots (Figures S4B-C)
 
 Red: enriched in protected/uninfected.  
 Blue: enriched in not protected/infected.  
@@ -982,7 +984,9 @@ ggarrange(addSmallLegend(TopPlot), bottom_panels, common.legend = TRUE, nrow = 2
 dev.off()
 ```
 
-# Combine with BSPZV data and visualize Camera data as bubble plot. 
+# Combine KSPZV1, VRC 312, VRC214, BSPZV data and visualize Camera data as bubble plot. 
+
+## Code for Camera bubble plot
 
 ```{r load bspzv1 local data, eval=FALSE, echo=FALSE, include=FALSE}
 myCameraPlotDat_BSPZV1 <- read_rds("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/BSPZV1 analysis/BSPZV1 Data/BSPZV1_Camera_PvNP.rds")
@@ -994,7 +998,7 @@ myCameraPlotDat_VRC314 <- read_rds("/Users/tuantran/Library/CloudStorage/OneDriv
 myCameraPlotDat_KSPZV1 <- read_rds("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Prelim Results JCI resubmission/KSPZV1_Camera_PvNP.rds")
 ```
 
-```{r combine VRC312 VRC314 BSPZV1 camera dat, eval=TRUE, echo=TRUE}
+```{r combine VRC312 VRC314 BSPZV1 camera dat, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
 #Get BSPZV1 Camera data from googledrive
 temp <- tempfile(fileext = ".rds")
 dl <- drive_download(
@@ -1126,7 +1130,7 @@ camera_bloodgen3_plot <- plotDat_Camera %>%
         axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
   facet_wrap(~module_type)
 ```
-Plot Camera bubbleplots
+## Plot Camera bubbleplots
 
 Red: enriched in protected/uninfected 
 Blue: enriched in not protected/infected
