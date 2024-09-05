@@ -622,6 +622,7 @@ lowBTM_splitCSPIgG_Outcome_BoxPlots_data <- ggplot_build(lowBTM_splitCSPIgG_Outc
 
 ```{r save lowBTM SPLIT CSP IgG Outcome, include=FALSE, echo=FALSE, eval=FALSE}
 ggsave(lowBTM_splitCSPIgG_Outcome_BoxPlots, file = paste0(figdir, "Fig SX lowBTM SPLIT CSP IgG Outcome BoxPlots.pdf"), device = cairo_pdf, units = "in", height = 16, width = 5)
+writexl::write_xlsx(lowBTM_splitCSPIgG_Outcome_BoxPlots$data, "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/Figure 8C Module Expression Score by Outcome by low BTM.xlsx")
 ```
 
 ```{r lowBTM_CSPIgG, include=FALSE, echo=FALSE, eval=FALSE}

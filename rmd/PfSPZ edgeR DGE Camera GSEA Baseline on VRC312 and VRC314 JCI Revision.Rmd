@@ -1,13 +1,15 @@
 ---
-title: "PfSPZ DGE on VRC 312 & VRC 314 Datasets, then combine with BSPZV1 data"
+title: "PfSPZ DGE on VRC 312 & VRC 314 Datasets, then combine with KSPZV1 and BSPZV1 data"
 author: "Tuan M. Tran"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output:
   html_document :
     theme: cerulean
+    toc: TRUE
+    number_sections: TRUE
 ---
 
-## Objective
+# Objective
 
 This markdown doc creates Seq (count) and cpm expression sets for VRC 312 and VRC 314 data, does differential gene expression with edgeR, and outputs to fast GSEA using several different module types (BTMs, MSigDB collections, MonacoMods). Generates fgsea output tables that can be visualized using the "PfSPZ Import VRC 312 314 GSEA IPA for Figures.Rmd" script in "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/" or on the KSPZV1 github repo.
 
@@ -21,7 +23,7 @@ Notes:
 4. Use FDR<10% across at least 2 studies as final filter for visualization.  
 5. Added CAMERA results to complement pre-ranked GSEA results. This was motivated by prior reviewer's comments that pre-ranked GSEA did not account for inter-gene correlations. Results here show that CAMERA results is similar to pre-ranked GSEA results.
 
-### Baseline Analysis
+# Baseline Analysis
 
 Run DGE, Camera, pre-ranked fastGSEA for baseline VRC 312 and VRC 314 datasets.
 
@@ -61,7 +63,7 @@ datadir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manu
 plot_dat_dir <- "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Data for all Plots JCI Resubmission/"
 ```
 
-### Read in the VRC 312 and VRC 314 expression sets
+## Read in the VRC 312 and VRC 314 expression sets
 
 ```{r read in files local, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE, eval=FALSE}
 #local paths
@@ -149,7 +151,7 @@ table(hdat_314$Group,hdat_314$Outcome.Final)
 table(hdat_314$Dose.group,hdat_314$Outcome.Final)
 ```
 
-### VRC 312 Analysis
+# VRC 312 Analysis
 
 Make DGElist object VRC 312
 
@@ -214,10 +216,11 @@ logcpm_312_rem <- removeBatchEffect(logcpm_312, batch1 = Batch1, batch2 = Batch2
 pd <- new("AnnotatedDataFrame", data = pData(filtered_312), varMetadata = data.frame(cbind(colnames(pData(filtered_312)), rep("stuff", length(colnames(pData(filtered_312)))))))
 fd <- new("AnnotatedDataFrame", data = fData(filtered_312), varMetadata = data.frame(cbind(colnames(fData(filtered_312)), rep("stuff", length(colnames(fData(filtered_312)))))))
 logcpm_remBatchEff_eset_312 <- ExpressionSet(assayData = logcpm_312_rem, phenoData = pd, featureData = fd)
+
 #saveRDS(logcpm_remBatchEff_eset_312, "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/logcpm_remBatchEff_eset_312.rds")
 ```
 
-Linear modeling VRC 312
+## Generalized linear modeling VRC 312
 
 Using edgeR with batch adjustment
 
@@ -323,7 +326,7 @@ write_csv(TopTab_VRC312_rankmetric[TopTab_VRC312_rankmetric$RankMetric>=0.1,],
                  "_RankMetric_",nrow(TopTab_VRC312_rankmetric[TopTab_VRC312_rankmetric$RankMetric>=0.1,]),"_07162023_sex_adj.csv"))
 ```
 
-### Camera VRC 312
+## Camera VRC 312
 
 Competitive gene set test accounting for inter-gene correlation between "protected" vs "not protected" VRC 312
 Uses Camera: https://academic.oup.com/nar/article/40/17/e133/2411151
@@ -372,13 +375,12 @@ myCameraPlotDat_VRC312 <- cameratab_bind_VRC312 %>%
   mutate(module_type = factor(module_type, levels = c("highBTMs", "MonacoModules", "lowBTMs", "MSigDB_Hallmark_v7.4", "BloodGen3Module"))) %>%
   arrange(desc(neglogpadj)) %>% 
   droplevels() %>%
-  filter(FDR < 0.05) %>%
   dplyr::select(study, module_type, module, everything())
 
-#saveRDS(myCameraPlotDat_VRC312, paste0(datadir, "VRC312_Camera_PvNP_FDR5.rds"))
+#saveRDS(myCameraPlotDat_VRC312, paste0(datadir, "VRC312_Camera_PvNP.rds"))
 ```
 
-### Apply GSEA VRC 312
+## Apply GSEA VRC 312
 
 Rank genes by -log10(PValue)*sign(logFC). Run fgsea from fgsea package using NamedGeneRankList2GseaTable helper function.
 
@@ -431,7 +433,7 @@ writexl::write_xlsx(GSEAtab_VRC312, paste0(datadir,"PfSPZ_GSEA_VRC312", "_",
                           ncol(y_VRC312),"x",nrow(y_VRC312),".xlsx"))
 ```
 
-### VRC 314 Analysis
+# VRC 314 Analysis
 
 Make DGElist object VRC 314
 
@@ -500,6 +502,7 @@ cpm_eset_314 <- ExpressionSet(assayData = logcpm_314, phenoData = pd, featureDat
 Batch1	<-   factor(cpm_eset_314$Lib_Batch)
 Batch2	<-   factor(cpm_eset_314$Date)
 logcpm_314_remBatchEff <- removeBatchEffect(logcpm_314, batch1 = Batch1, batch2 = Batch2)
+
 #saveRDS(logcpm_314_remBatchEff, "/Volumes/GoogleDrive/My Drive/Tran Lab Shared/Projects/Doris Duke PfSPZ Kenya/Tuan PfSPZ/KenyaPfSPZ/logcpm_314_remBatchEff.rds")
 
 #Make CPM eset after rem batch effect
@@ -516,7 +519,7 @@ logcpm_remBatchEff_eset_314 <- ExpressionSet(assayData = logcpm_314_remBatchEff,
 #                                             ".rds"))
 ```
 
-Linear modeling  VRC 314
+## Generalized linear modeling  VRC 314
 
 Use edgeR with batch adjustment
 
@@ -623,7 +626,7 @@ write_csv(TopTab_VRC314_rankmetric[TopTab_VRC314_rankmetric$RankMetric>=0.1,],
                  "_RankMetric_",nrow(TopTab_VRC314_rankmetric[TopTab_VRC314_rankmetric$RankMetric>=0.1,]),"_07162023_sex_adj.csv"))
 ```
 
-### Camera VRC 314
+## Camera VRC 314
 
 Competitive gene set test accounting for inter-gene correlation between "protected" vs "not protected" VRC 314
 Uses Camera: https://academic.oup.com/nar/article/40/17/e133/2411151
@@ -647,7 +650,7 @@ cameratab_bind_VRC314 <- bind_rows(cameratab_list, .id = "module_type") %>%
   dplyr::select(study, module_type, module, everything())
 ```
 
-### Plot CAMERA results VRC 314
+Plot CAMERA results VRC 314
 
 ```{r camera low btms protected vs not protected by group VRC 314, echo=TRUE, message=FALSE, warning=FALSE}
 #plotting options
@@ -672,13 +675,12 @@ myCameraPlotDat_VRC314 <- cameratab_bind_VRC314 %>%
   mutate(module_type = factor(module_type, levels = c("highBTMs", "MonacoModules", "lowBTMs", "MSigDB_Hallmark_v7.4", "BloodGen3Module"))) %>%
   arrange(desc(neglogpadj)) %>% 
   droplevels() %>%
-  filter(FDR < 0.05) %>%
   dplyr::select(study, module_type, module, everything())
 
-#saveRDS(myCameraPlotDat_VRC314, paste0(datadir, "VRC314_Camera_PvNP_FDR5.rds"))
+#saveRDS(myCameraPlotDat_VRC314, paste0(datadir, "VRC314_Camera_PvNP.rds"))
 ```
 
-### Apply GSEA VRC 314
+## Apply GSEA VRC 314
 
 Rank genes by -log10(PValue)*sign(logFC). Run fgsea from fgsea package using NamedGeneRankList2GseaTable helper function.
 
@@ -765,7 +767,7 @@ TopTab_BSPZV1_VRC312_VRC314 %>%
                       paste0(datadir, "PfSPZ_edgeR_DGE_PvS_BSPZV1_VRC312_VRC314_allDEGs.xlsx"))
 ```
 
-### Make VRC 312, VRC 314, BSPZV1 tables
+# Make VRC 312, VRC 314, BSPZV1 tables
 
 ```{r make vrc and bspzv1 study tables, fig.align='center', fig.width=8, fig.height=6}
 study_tab <- data.frame(matrix(c("KPSZV1", "Kenya", "malaria-exposed infants","high dose","1,800,000 PfSPZ x 3", "24", "37",
@@ -796,7 +798,7 @@ study_tab_plot <- ggtexttable(study_tab,
 study_tab_plot
 ```
 
-### Combine with BSPZV data and visualize GSEA data as bubble plot. 
+# Combine with BSPZV data and visualize GSEA data as bubble plot. 
 
 Filter based on padj < 0.10.
 
@@ -980,51 +982,64 @@ ggarrange(addSmallLegend(TopPlot), bottom_panels, common.legend = TRUE, nrow = 2
 dev.off()
 ```
 
+# Combine with BSPZV data and visualize Camera data as bubble plot. 
+
 ```{r load bspzv1 local data, eval=FALSE, echo=FALSE, include=FALSE}
 myCameraPlotDat_BSPZV1 <- read_rds("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/BSPZV1 analysis/BSPZV1 Data/BSPZV1_Camera_PvNP.rds")
 
-myCameraPlotDat_VRC312 <- read_rds("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Prelim Results JCI resubmission/VRC312_Camera_PvNP_FDR5.rds")
+myCameraPlotDat_VRC312 <- read_rds("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Prelim Results JCI resubmission/VRC312_Camera_PvNP.rds")
 
-myCameraPlotDat_VRC314 <- read_rds("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Prelim Results JCI resubmission/VRC314_Camera_PvNP_FDR5.rds")
+myCameraPlotDat_VRC314 <- read_rds("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Prelim Results JCI resubmission/VRC314_Camera_PvNP.rds")
+
+myCameraPlotDat_KSPZV1 <- read_rds("/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Prelim Results JCI resubmission/KSPZV1_Camera_PvNP.rds")
 ```
 
-```{r combine VRC312 VRC314 BSPZV1 camera dat, eval=FALSE, include=FALSE, echo=FALSE}
+```{r combine VRC312 VRC314 BSPZV1 camera dat, eval=TRUE, echo=TRUE}
 #Get BSPZV1 Camera data from googledrive
 temp <- tempfile(fileext = ".rds")
 dl <- drive_download(
   as_id("1NWQVtjpDP5Qjtee4aezR0fSywXpEn5fR"), path = temp, overwrite = TRUE)
 myCameraPlotDat_BSPZV1 <- readRDS(file = dl$local_path)
 
-Cameratab_BSPZV1_VRC312_VRC314 <- bind_rows(myCameraPlotDat_BSPZV1, myCameraPlotDat_VRC312, myCameraPlotDat_VRC314)                                    
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1DI6Xvqp5emAs_u_SNZxyxnuPkcxkDRxq"), path = temp, overwrite = TRUE)
+myCameraPlotDat_VRC312 <- readRDS(file = dl$local_path)
+
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1DIaX2KI9fBuKUIP-rbdKiOr5gwzZG39D"), path = temp, overwrite = TRUE)
+myCameraPlotDat_VRC314 <- readRDS(file = dl$local_path)
+
+temp <- tempfile(fileext = ".rds")
+dl <- drive_download(
+  as_id("1DHHoRME8ljljACDmtzyGm8tgt0OajxtS"), path = temp, overwrite = TRUE)
+myCameraPlotDat_KSPZV1 <- readRDS(file = dl$local_path)
+
+Cameratab_KSPZV1_BSPZV1_VRC312_VRC314 <- bind_rows(myCameraPlotDat_BSPZV1, myCameraPlotDat_VRC312, myCameraPlotDat_VRC314, myCameraPlotDat_KSPZV1)                         
 ```
 
 ```{r write Cameratab_BSPZV1_VRC312_VRC314, eval=FALSE, include=FALSE, echo=FALSE}
-Cameratab_BSPZV1_VRC312_VRC314 %>%
+Cameratab_KSPZV1_BSPZV1_VRC312_VRC314 %>%
   writexl::write_xlsx(.,
-                      paste0(datadir, "PfSPZ_Camera_PvS_BSPZV1_VRC312_VRC314_sex_adj.xlsx"))
+                      paste0(datadir, "PfSPZ_Camera_PvS_KSPZV1_BSPZV1_VRC312_VRC31.xlsx"))
 ```
 
-```{r visualize camera data, echo=FALSE, include=FALSE, eval=FALSE, message=FALSE, warning=FALSE}
-### Visualize Camera data as bubble plot
-
-#This was not included in the manuscript but presented here. Filter based on FDR<10% across ≥2 studies.
-
-#Red: enriched in protected/uninfected 
-#Blue: enriched in not protected/infected
+```{r visualize camera data, echo=TRUE, message=FALSE, warning=FALSE}
 fdr_threshold <- 0.1
 
-common_pathways <- Cameratab_BSPZV1_VRC312_VRC314 %>%
+common_pathways <- Cameratab_KSPZV1_BSPZV1_VRC312_VRC314 %>%
   filter(FDR < fdr_threshold) %>%
   group_by(module_type, module) %>%
   dplyr::select(module) %>%
   dplyr::summarize(n=n()) %>%
   filter(n>1)
 
-Cameratab_BSPZV1_VRC312_VRC314 <- Cameratab_BSPZV1_VRC312_VRC314 %>%
+Cameratab_KSPZV1_BSPZV1_VRC312_VRC314 <- Cameratab_KSPZV1_BSPZV1_VRC312_VRC314 %>%
   filter(module %in% common_pathways$module)
 
-plotDat_Camera <- Cameratab_BSPZV1_VRC312_VRC314 %>%
-  mutate(study = factor(study, levels = c("VRC312", "VRC314", "BSPZV1"))) %>%
+plotDat_Camera <- Cameratab_KSPZV1_BSPZV1_VRC312_VRC314 %>%
+  mutate(study = factor(study, levels = c("KSPZV1","VRC312", "VRC314", "BSPZV1"))) %>%
   mutate(enrichment = ifelse(Direction == "Up",
                            "up in protected/uninfected",
                            "up in not protected/infected")) %>%
@@ -1049,11 +1064,11 @@ basetextsize <- 7.5
 myfont <- "Helvetica"
 bubble_max_size <- 6
 
-camera_hm_hibtm_monaco_plot <- plotDat_Camera %>%
-  filter(module_type %in% c("MSigDB_Hallmark_v7.4", "highBTMs", "MonacoModules")) %>%
+camera_hibtm_monaco_plot <- plotDat_Camera %>%
+  filter(module_type %in% c("highBTMs", "MonacoModules")) %>%
   mutate(module_type = factor(module_type,
-                              levels = c("highBTMs", "MonacoModules", "MSigDB_Hallmark_v7.4"),
-                              labels = c("high BTMs", "Monaco", "Hallmark"))) %>%
+                              levels = c("highBTMs", "MonacoModules"),
+                              labels = c("high BTMs", "Monaco"))) %>%
   ggplot(., aes(x = study, y = module, fill = enrichment)) +
   geom_point(aes(size=neglogFDR), shape=21, stroke = 0.25, alpha = 0.6) +
   scale_size_area(name = expression(-log[10]~FDR), max_size = bubble_max_size) +
@@ -1111,16 +1126,15 @@ camera_bloodgen3_plot <- plotDat_Camera %>%
         axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
   facet_wrap(~module_type)
 ```
+Plot Camera bubbleplots
 
-```{r plot camera bubbleplot hi btms, fig.align='center', fig.width=10, fig.height=11, echo=FALSE, include=FALSE, eval=FALSE, message=FALSE, warning=FALSE}
-### Plot Camera bubbleplots
+Red: enriched in protected/uninfected 
+Blue: enriched in not protected/infected
 
-#Red: enriched in protected/uninfected 
-#Blue: enriched in not protected/infected
+Only modules with FDR<10% in at least 2 studies are shown.
 
-#Only modules with FDR<10% in at least 2 studies are shown. KSPZ1 was not included here.
-
-#addSmallLegend(camera_hibtms_plot)
-ggpubr::ggarrange(camera_hm_hibtm_monaco_plot, ggplot() + theme_void(), camera_lowbtm_plot, ggplot() + theme_void(), camera_bloodgen3_plot,
+```{r plot camera bubbleplot hi btms, fig.align='center', fig.width=12, fig.height=12, echo=TRUE, message=FALSE, warning=FALSE}
+first_col_plot <- ggpubr::ggarrange(camera_hibtm_monaco_plot, NULL, nrow = 2, heights = c(2.25,3))
+ggpubr::ggarrange(first_col_plot, ggplot() + theme_void(), camera_lowbtm_plot, ggplot() + theme_void(), camera_bloodgen3_plot,
                   ncol = 5, widths = c(0.77, -0.175, 1, -0.175, 0.78), common.legend = TRUE)
 ```
