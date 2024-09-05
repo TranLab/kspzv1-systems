@@ -391,7 +391,7 @@ writexl::write_xlsx(plotDat, path = "/Users/tuantran/Library/CloudStorage/OneDri
 
 This is not included in the manuscript but provided here as it was requested during prior reviews.
 
-```{r, camera protected vs not protected by group, message=FALSE, warning=FALSE}
+```{r camera protected vs not protected by group, message=FALSE, warning=FALSE}
 i <- "highBTMs"
 url <- paste0("https://github.com/TranLab/ModuleLists/blob/main/", i, ".rds?raw=true")
 highBTM_list <- readRDS(url(url, method="libcurl"))
@@ -428,6 +428,48 @@ for(i in names(ygroup)){
     rownames_to_column(var = "module")
 }
 cameratab_bind <- dplyr::bind_rows(cameratab, .id = "dosegroup")
+```
+Code for Camera for high-dose PfSPZ baseline, all module types
+
+```{r camera protected vs not protected for high dose all module types, message=FALSE, warning=FALSE, eval=FALSE}
+
+highdosegroup <- xgroup$`1.8 x 10^6 PfSPZ`
+Subject <- factor(highdosegroup$PATID)
+Outcome <- factor(highdosegroup$Outcome, levels = c(1,0), labels = c("NotProtected","Protected"))
+Timepoint <- factor(highdosegroup$Timepoint, levels = c(0,25), labels = c("baseline","postvax"))
+Sex <- factor(highdosegroup$SEX)
+Batch <- factor(highdosegroup$SEQBATCH, levels = c("Aug2019","Nov2019"))
+Site <- as.factor(highdosegroup$site)
+CSPAb <- as.integer(highdosegroup$CSPAb)
+CSPAb <- log10(CSPAb+1) #log transform CSP Ab data to make linear
+Pf_VAX1 <- as.factor(highdosegroup$mal.vax.1)
+#This is the revised Timepoint 0 analysis.
+design <- model.matrix(~Batch + Sex + Site + CSPAb + Pf_VAX1 + Outcome)
+print(colnames(design))
+rownames(design) <- ygroup$`1.8 x 10^6 PfSPZ`$samples$PATID
+ygroup$`1.8 x 10^6 PfSPZ`     <- estimateDisp(ygroup$`1.8 x 10^6 PfSPZ`,design, robust = TRUE)
+fit   <- glmQLFit(ygroup$`1.8 x 10^6 PfSPZ`, design, robust = TRUE)
+qlf <- glmQLFTest(fit, contrast = c(rep(0, ncol(design)-1),1))
+
+cameratab2 <- setNames(as.list(c(1:5)), c("highBTMs", "lowBTMs", "MonacoModules", "MSigDB_Hallmark_v7.4", "BloodGen3Module"))
+for(i in names(cameratab2)){
+print(i)
+url <- paste0("https://github.com/TranLab/ModuleLists/blob/main/", i, ".rds?raw=true")
+module_list <- readRDS(url(url, method="libcurl"))
+module.indices <- ids2indices(module_list, ygroup$`1.8 x 10^6 PfSPZ`$genes$GeneSymbol)
+cameratab2[[i]] <- camera(ygroup$`1.8 x 10^6 PfSPZ`, module.indices, design, contrast = c(rep(0, ncol(design)-1),1), inter.gene.cor=0.01)
+cameratab2[[i]] <- cameratab2[[i]] %>%
+    rownames_to_column(var = "module")
+}
+
+myCameraPlotDat_KSPZV1 <- dplyr::bind_rows(cameratab2, .id = "module_type") %>%
+  mutate(study = "KSPZV1") %>%
+  dplyr::select(study, module_type, module, NGenes, Direction, FDR) %>%
+  mutate(neglogpadj = -log(FDR)) %>%
+  mutate(fdr_direction = ifelse(Direction == "Down", -1*neglogpadj, neglogpadj))
+
+myCameraPlotDat_KSPZV1 %>%
+  write_rds(. , "/Users/tuantran/Library/CloudStorage/OneDrive-IndianaUniversity/Manuscripts/KSPZV1 Manuscript/JCI Resubmission April 2023/Prelim Results JCI resubmission/KSPZV1_Camera_PvNP.rds")
 ```
 
 ### CAMERA bubble plots, FDR<5%
