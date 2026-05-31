@@ -43,13 +43,15 @@ ApplyORA2Genesets <- function(genelist, geneset = c("all", "bloodmodules", "MSig
   #Load the pathways into a named list
   if(geneset == "all"){
     allGeneSets <- c("MonacoModules", "highBTMs", "lowBTMs", "BloodGen3Module",
-                     "MSigDB_Hallmark_v7.4", "MSigDB_C2_biocarta_v7.4", "MSigDB_C2_kegg_v7.4", "MSigDB_C8_all_v7.4","MSigDB_C7_all_v7.4","MSigDB_C5_GO_bp_v7.4", "MSigDB_C5_GO_mf_v7.4")
+                     "h.all.v2026.1.Hs.symbols", "c2.cp.biocarta.v2026.1.Hs.symbols", "c2.cp.kegg_medicus.v2026.1.Hs.symbols", "c5.go.bp.v2026.1.Hs.symbols", "c5.go.mf.v2026.1.Hs.symbols", "c7.vax.v2026.1.Hs.symbols","c7.immunesigdb.v2026.1.Hs.symbols",
+                    "c8.all.v2026.1.Hs.symbols","c9.all.v2026.1.Hs.symbols")
     }
   if(geneset == "bloodmodules"){
     allGeneSets <- c("MonacoModules", "highBTMs", "lowBTMs", "BloodGen3Module")
     }
   if(geneset == "MSigDB"){
-    allGeneSets <- c("MSigDB_Hallmark_v7.4", "MSigDB_C2_biocarta_v7.4", "MSigDB_C2_kegg_v7.4", "MSigDB_C8_all_v7.4","MSigDB_C7_all_v7.4","MSigDB_C5_GO_bp_v7.4", "MSigDB_C5_GO_mf_v7.4")
+    allGeneSets <- c("h.all.v2026.1.Hs.symbols", "c2.cp.biocarta.v2026.1.Hs.symbols", "c2.cp.kegg_medicus.v2026.1.Hs.symbols", "c5.go.bp.v2026.1.Hs.symbols", "c5.go.mf.v2026.1.Hs.symbols", "c7.vax.v2026.1.Hs.symbols","c7.immunesigdb.v2026.1.Hs.symbols",
+                    "c8.all.v2026.1.Hs.symbols","c9.all.v2026.1.Hs.symbols")
                      }
   if(!geneset %in% c("all", "bloodmodules", "MSigDB")){
     print("geneset argument can only be 'all', 'bloodmodules', or 'MSigDB'")
